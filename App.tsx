@@ -168,8 +168,6 @@ useEffect(() => {
   }
       bgm!: Phaser.Sound.BaseSound;
       __bgm__!: Phaser.Sound.BaseSound;
-      __minimapCam__!: Phaser.Cameras.Scene2D.Camera;
-      __minimapBorder__!: Phaser.GameObjects.Rectangle | null;
 
       // Tell TS these exist on Scene
       declare input: Phaser.Input.InputPlugin;
@@ -202,7 +200,23 @@ useEffect(() => {
     try {
       if (this.cache.audio.exists("bgm")) {
         this.bgm = this.sound.add("bgm", { loop: true, volume: audioPrefs.musicVol });
-        this.bgm.play();
+        const playBgm = () => {
+          if (!this.bgm.isPlaying) {
+            this.bgm.play();
+          }
+        };
+
+        if (this.sound.locked) {
+          this.sound.once(Phaser.Sound.Events.UNLOCKED, playBgm);
+          this.input.once("pointerdown", () => {
+            if (!this.sound.locked) {
+              playBgm();
+            }
+          });
+        } else {
+          playBgm();
+        }
+
         (this as any).__bgm__ = this.bgm;
       } else {
         console.warn('[AUDIO] "bgm" not in cache; skipping music.');
@@ -212,24 +226,11 @@ useEffect(() => {
     }
 
     // ----- MINIMAP -----
-    const mapPrefs = (window as any).__MAP_PREFS__ || { showMap: false };
-    this.__minimapCam__ = this.cameras.add(12, 12, 220, 140);
-    this.__minimapCam__.setZoom(0.16);
-    this.__minimapCam__.setBackgroundColor(0x000000);
-    this.__minimapCam__.setVisible(mapPrefs.showMap);
-
-    this.__minimapBorder__ = this.add.rectangle(122, 82, 220, 140)
-      .setStrokeStyle(2, 0x10b981)
-      .setScrollFactor(0)
-      .setVisible(mapPrefs.showMap)
-      .setDepth(9999);
-
 
         // 1) Spawn player first
 this.player = this.physics.add.sprite(200, 200, "player", 0);
 this.player.setCollideWorldBounds(true);
 this.player.setSize(18, 28).setOffset(7, 16);
-this.__minimapCam__.startFollow(this.player, true, 0.2, 0.2);
 
 // 2) Build walls after player exists
 // 2) Build walls after player exists
@@ -639,10 +640,7 @@ if (!playing) {
     };
 
     (window as any).ALGMON_SET_MINIMAP_VISIBLE = (vis: boolean) => {
-      const scene = game.scene.getScene("GameScene") as any;
-      if (!scene || !scene.__minimapCam__) return;
-      scene.__minimapCam__.setVisible(vis);
-      scene.__minimapBorder__?.setVisible(vis);
+      (window as any).__MAP_PREFS__ = { showMap: vis };
     };
 
     // optional: a keyboard-driven toggle already exists (keydown-M)
