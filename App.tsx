@@ -1,4 +1,7 @@
 const sheetUrl = new URL("./assets/sprites/player_sheet.png", import.meta.url).href;
+const bgmMp3 = new URL("./assets/audio/bgm.mp3", import.meta.url).href;
+const bgmOgg = new URL("./assets/audio/bgm.ogg", import.meta.url).href; // optional fallback
+
 
 // src/App.tsx
 import { useEffect, useRef, useState } from "react";
@@ -75,6 +78,28 @@ const [musicVol, setMusicVol] = useState<number>(() => {
 const [showMap, setShowMap] = useState(false);
 const [questLogOpen, setQuestLogOpen] = useState(false);
 
+// persist & push to Phaser when audio prefs change
+useEffect(() => {
+  localStorage.setItem("algebramon_muted", muted ? "1" : "0");
+  (window as any).ALGMON_AUDIO_APPLY?.({ muted, musicVol });
+}, [muted]);
+
+useEffect(() => {
+  localStorage.setItem("algebramon_musicVol", String(musicVol));
+  (window as any).ALGMON_AUDIO_APPLY?.({ muted, musicVol });
+}, [musicVol]);
+
+// persist & push to Phaser when map visibility changes
+useEffect(() => {
+  localStorage.setItem("algebramon_showMap", showMap ? "1" : "0");
+  (window as any).ALGMON_SET_MINIMAP_VISIBLE?.(showMap);
+}, [showMap]);
+
+// on first mount, hydrate showMap from localStorage
+useEffect(() => {
+  const initial = localStorage.getItem("algebramon_showMap");
+  if (initial === "1") setShowMap(true);
+}, []);
 
   // --------- AUTH + PROFILE + STARTERS ----------
   useEffect(() => {
@@ -125,11 +150,27 @@ useEffect(() => {
   return () => id && clearInterval(id);
 }, [showMap, pPos.x, pPos.y]);
 
+useEffect(() => {
+  localStorage.setItem("algebramon_muted", muted ? "1" : "0");
+}, [muted]);
+
+useEffect(() => {
+  localStorage.setItem("algebramon_musicVol", String(musicVol));
+}, [musicVol]);
+
   // --------- PHASER SCENE ----------
   useEffect(() => {
     if (!ready || !mountRef.current) return;
 
     class GameScene extends Phaser.Scene {
+    constructor() {
+    super({ key: "GameScene" });
+  }
+      bgm!: Phaser.Sound.BaseSound;
+      __bgm__!: Phaser.Sound.BaseSound;
+      __minimapCam__!: Phaser.Cameras.Scene2D.Camera;
+      __minimapBorder__!: Phaser.GameObjects.Rectangle | null;
+
       // Tell TS these exist on Scene
       declare input: Phaser.Input.InputPlugin;
       declare physics: Phaser.Physics.Arcade.ArcadePhysics;
@@ -145,6 +186,8 @@ useEffect(() => {
       preload() {
   // 3×4 sheet, each frame 32×48
   this.load.spritesheet("player", sheetUrl, { frameWidth: 32, frameHeight: 48 });
+   this.load.audio("bgm", [bgmMp3, bgmOgg]);
+  
 }
 
 
@@ -152,11 +195,41 @@ useEffect(() => {
       async create() {
         // Background grid
         this.add.grid(0, 0, this.worldW, this.worldH, 64, 64, 0x0f172a, 0.06, 0x10b981, 0.15).setOrigin(0, 0);
+    // ----- AUDIO -----
+    const audioPrefs = (window as any).__AUDIO_PREFS__ || { muted: false, musicVol: 0.6 };
+    this.sound.mute = audioPrefs.muted;
+
+    try {
+      if (this.cache.audio.exists("bgm")) {
+        this.bgm = this.sound.add("bgm", { loop: true, volume: audioPrefs.musicVol });
+        this.bgm.play();
+        (this as any).__bgm__ = this.bgm;
+      } else {
+        console.warn('[AUDIO] "bgm" not in cache; skipping music.');
+      }
+    } catch (err) {
+      console.warn("[AUDIO] Failed to start BGM, continuing without music:", err);
+    }
+
+    // ----- MINIMAP -----
+    const mapPrefs = (window as any).__MAP_PREFS__ || { showMap: false };
+    this.__minimapCam__ = this.cameras.add(12, 12, 220, 140);
+    this.__minimapCam__.setZoom(0.16);
+    this.__minimapCam__.setBackgroundColor(0x000000);
+    this.__minimapCam__.setVisible(mapPrefs.showMap);
+
+    this.__minimapBorder__ = this.add.rectangle(122, 82, 220, 140)
+      .setStrokeStyle(2, 0x10b981)
+      .setScrollFactor(0)
+      .setVisible(mapPrefs.showMap)
+      .setDepth(9999);
+
 
         // 1) Spawn player first
 this.player = this.physics.add.sprite(200, 200, "player", 0);
 this.player.setCollideWorldBounds(true);
 this.player.setSize(18, 28).setOffset(7, 16);
+this.__minimapCam__.startFollow(this.player, true, 0.2, 0.2);
 
 // 2) Build walls after player exists
 // 2) Build walls after player exists
@@ -209,6 +282,17 @@ this.input.keyboard!.on("keydown-P", () => {
   (window as any).ALGMON_TOGGLE_HELP?.();
 });
 
+this.input.keyboard!.on("keydown-L", () => {
+  if (!this.scale.isFullscreen) this.scale.startFullscreen();
+  else this.scale.stopFullscreen();
+});
+this.input.keyboard!.on("keydown-0", () => {
+  // 0 key toggles debug (handy during layout work)
+  // @ts-ignore
+  const dbg = this.physics.world.debug;
+  // @ts-ignore
+  this.physics.world.debug = !dbg;
+});
 
 
 // idle frames by direction (first frame of each row)
@@ -228,10 +312,11 @@ this.player.setFrame(idleFrame.down);
         this.keys = this.input.keyboard!.addKeys("W,A,S,D,SPACE,E") as any;
 
         // UI hint
-        this.add.text(16, 12, `SPACE: Study • E: Gym • F: Professor
-`, {
-          fontFamily: "monospace", fontSize: "12px", color: "#334155"
-        }).setScrollFactor(0).setDepth(1000);
+        this.add.text(16, 12,
+  `SPACE: Study • E: Gym • F: Professor • T: Tutor • M: Map • P: Pause`,
+  { fontFamily: "monospace", fontSize: "12px", color: "#334155" }
+).setScrollFactor(0).setDepth(1000);
+
 
         // ----- Draw Gyms -----
         this.gymsGroup = this.add.container(0, 0);
@@ -447,10 +532,12 @@ this.input.keyboard!.on("keydown-SPACE", async () => {
       }
 
       update() {
-        // Movement
-       const speed = 180;
-let vx = 0, vy = 0;
-let playing = false;
+         // Early guards so update doesn't run before create finished
+  if (!this.player || !this.cursors || !this.keys) return;
+ // Movement
+  const speed = 180;
+  let vx = 0, vy = 0;
+  let playing = false;
 
 // horizontal
 if (this.cursors.left?.isDown || this.keys["A"].isDown) {
@@ -478,7 +565,17 @@ if (this.cursors.up?.isDown || this.keys["W"].isDown) {
   playing = true;
 }
 
+// …after you decide vx, vy from inputs…
+
+// --- normalize diagonal speed so diagonals aren't faster ---
+const mag = Math.hypot(vx, vy);
+if (mag > 0) {
+  const scale = speed / mag; // 'speed' is your const speed = 180;
+  vx *= scale;
+  vy *= scale;
+}
 this.player.setVelocity(vx, vy);
+// -----------------------------------------------------------
 
 // idle (face last direction)
 if (!playing) {
@@ -508,6 +605,9 @@ if (!playing) {
         }
       }
     }
+     // Make initial audio/map prefs visible to the scene
+    (window as any).__AUDIO_PREFS__ = { muted, musicVol };
+    (window as any).__MAP_PREFS__ = { showMap };
 
     const game = new Phaser.Game({
       type: Phaser.AUTO,
@@ -517,6 +617,7 @@ if (!playing) {
       physics: { default: "arcade" },
       scene: [GameScene],
       backgroundColor: "#f1f5f9",
+        audio: { disableWebAudio: false, noAudio: false } // explicit
     });
 
     // Bridges: Phaser → React
@@ -524,6 +625,38 @@ if (!playing) {
     (window as any).ALGMON_TOGGLE_MINIMAP = () => setShowMap(v => !v);
     (window as any).ALGMON_SHOW_Q = (q: QuestionRow) => { setQRow(q); setQOpen(true); };
     (window as any).ALGMON_SET_PROMPT = (s: string) => { setNearGymText(s); };
+        // React <-> Phaser bridges
+    (window as any).ALGMON_AUDIO_APPLY = (opts: { muted?: boolean; musicVol?: number }) => {
+      const scene = game.scene.getScene("GameScene") as any;
+      if (!scene || !scene.sound) return;
+      if (typeof opts.muted === "boolean") {
+        scene.sound.mute = opts.muted;
+        scene.__bgm__?.setMute(opts.muted);
+      }
+      if (typeof opts.musicVol === "number") {
+        scene.__bgm__?.setVolume(Math.max(0, Math.min(1, opts.musicVol)));
+      }
+    };
+
+    (window as any).ALGMON_SET_MINIMAP_VISIBLE = (vis: boolean) => {
+      const scene = game.scene.getScene("GameScene") as any;
+      if (!scene || !scene.__minimapCam__) return;
+      scene.__minimapCam__.setVisible(vis);
+      scene.__minimapBorder__?.setVisible(vis);
+    };
+
+    // optional: a keyboard-driven toggle already exists (keydown-M)
+    // wire its implementation to state if you want React to know when 'M' toggles:
+    (window as any).ALGMON_TOGGLE_MINIMAP = () => {
+      const next = !((window as any).__MAP_PREFS__?.showMap ?? false);
+      (window as any).__MAP_PREFS__ = { showMap: next };
+      // tell React state to follow (no-op if React isn't mounted yet)
+      try { 
+        // you already have setShowMap in scope in this component,
+        // so just call it:
+        setShowMap(next);
+      } catch {}
+    };
     (window as any).ALGMON_TRY_GYM = async (unit: string) => {
       if (!auth.currentUser) return;
 
