@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { loadTSV } from "../lib/sheetLoader";
 import { QUESTIONS_TSV } from "../config";
 import { GYMS } from "../data/gyms";
+import { BATTLE_NPCS, type BattleNPC } from "../data/npcs";
 import { getUnitNormFromRow } from "../lib/questionUtils";
 import { ensureSceneAssets, type AssetDescriptor } from "../lib/runtimeLoader";
 import BattleScene from "./BattleScene";
@@ -50,12 +51,13 @@ export default class WorldScene extends Phaser.Scene {
   keys!: { [k: string]: Phaser.Input.Keyboard.Key };
   player!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
   baseSpeed = 180;
-  slowUntil = 0;
   professor!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
   worldW = WORLD_BOUNDS.width;
   worldH = WORLD_BOUNDS.height;
   gymsGroup!: Phaser.GameObjects.Container;
   obstacles!: Phaser.Physics.Arcade.StaticGroup;
+  npcGroup!: Phaser.Physics.Arcade.Group;
+  battleNpcs: { sprite: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody; data: BattleNPC }[] = [];
 
   constructor() {
     super({ key: "WorldScene" });
@@ -64,9 +66,6 @@ export default class WorldScene extends Phaser.Scene {
   async create() {
     await ensureSceneAssets(this, WorldScene.ASSETS);
     this.obstacles = this.physics.add.staticGroup();
-    (window as any).ALGMON_SET_SLOWDOWN = (active: boolean) => {
-      this.slowUntil = active ? this.time.now + 5000 : 0;
-    };
     this.add.grid(0, 0, this.worldW, this.worldH, 64, 64, 0x0f172a, 0.06, 0x10b981, 0.15).setOrigin(0, 0);
 
     this.initAudio();
@@ -171,7 +170,15 @@ export default class WorldScene extends Phaser.Scene {
     });
     this.player.setFrame(1);
 
-    this.input.keyboard!.on("keydown-P", () => (window as any).ALGMON_TOGGLE_HELP?.());
+    this.input.keyboard!.on("keydown-P", () => {
+      const target = this.findNearbyNpc(120);
+      if (target) {
+        (window as any).ALGMON_START_NPC_BATTLE?.(target.id);
+      } else {
+        (window as any).ALGMON_TOGGLE_HELP?.();
+      }
+    });
+    this.input.keyboard!.on("keydown-H", () => (window as any).ALGMON_TOGGLE_HELP?.());
 
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,SPACE,E") as any;
@@ -180,26 +187,20 @@ export default class WorldScene extends Phaser.Scene {
       .text(
         16,
         12,
-        `SPACE: Study • E: Gym • F: Professor • T: Tutor • M: Map • P: Pause`,
+        `SPACE: Study • E: Gym • F: Professor • T: Tutor • M: Map • P: Battle • H: Help`,
         { fontFamily: "monospace", fontSize: "12px", color: "#334155" }
       )
       .setScrollFactor(0)
       .setDepth(1000);
 
     this.gymsGroup = this.add.container(0, 0);
+    this.gymsGroup.setDepth(8);
     for (const gym of GYMS) {
-      const rect = this.add.rectangle(gym.x, gym.y, 80, 60, gym.color ?? 0x0ea5e9, 1);
-      rect.setStrokeStyle(2, 0x0f172a, 1);
-      const label = this.add.text(gym.x - 36, gym.y - 40, gym.name, {
-        fontFamily: "monospace",
-        fontSize: "12px",
-        color: "#0f172a"
-      });
-      this.gymsGroup.add(rect);
-      this.gymsGroup.add(label);
+      this.renderGymExterior(gym);
     }
 
     this.spawnProfessor();
+    this.spawnBattleNPCs();
 
     this.input.keyboard!.on("keydown-F", async () => {
       if (!this.professor) return;
@@ -221,6 +222,7 @@ export default class WorldScene extends Phaser.Scene {
     this.input.keyboard!.on("keydown-M", () => (window as any).ALGMON_TOGGLE_MINIMAP?.());
 
     const grassLayer = this.add.container(0, 0);
+    grassLayer.setDepth(2);
     const grassRects: Phaser.GameObjects.Rectangle[] = [];
     GRASS_PATCHES.forEach((patch) => {
       const rect = this.add.rectangle(
@@ -288,7 +290,7 @@ export default class WorldScene extends Phaser.Scene {
       delay: 400,
       loop: true,
       callback: async () => {
-        if ((window as any).__BOSS_LOCK) return;
+        if ((window as any).__BOSS_LOCK || (window as any).__NPC_LOCK) return;
         if (!this.player.body) return;
         const inGrass = grassRects.some((r) => {
           const dx = Math.abs(this.player.x - r.x);
@@ -320,7 +322,7 @@ export default class WorldScene extends Phaser.Scene {
     });
 
     this.input.keyboard!.on("keydown-SPACE", async () => {
-      if ((window as any).__BOSS_LOCK) return;
+      if ((window as any).__BOSS_LOCK || (window as any).__NPC_LOCK) return;
       try {
         const rows = await loadTSV(QUESTIONS_TSV);
         if (!rows || rows.length === 0) {
@@ -355,7 +357,7 @@ export default class WorldScene extends Phaser.Scene {
     });
 
     this.input.keyboard!.on("keydown-E", () => {
-      if ((window as any).__BOSS_LOCK) return;
+      if ((window as any).__BOSS_LOCK || (window as any).__NPC_LOCK) return;
       const near = (window as any).__NEAR_GYM_UNIT as string | null;
       if (!near) return;
       this.launchSceneWithLoader("GymScene", GymScene.ASSETS, { gymUnit: near });
@@ -376,7 +378,7 @@ export default class WorldScene extends Phaser.Scene {
     let vx = 0;
     let vy = 0;
     let playing = false;
-    const currentSpeed = this.slowUntil > this.time.now ? this.baseSpeed / 2 : this.baseSpeed;
+    const currentSpeed = this.baseSpeed;
 
     if (this.cursors.left?.isDown || this.keys["A"].isDown) {
       vx = -currentSpeed;
@@ -418,23 +420,30 @@ export default class WorldScene extends Phaser.Scene {
 
     (window as any).__PLAYER_POS = { x: this.player.x, y: this.player.y };
 
-    let found: { unit: string; name: string } | null = null;
-    for (const gym of GYMS) {
-      const dx = this.player.x - gym.x;
-      const dy = this.player.y - gym.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < 90) {
-        found = gym;
-        break;
+    let prompt = "";
+    const nearNpc = this.findNearbyNpc(110);
+    if (nearNpc) {
+      (window as any).__NEAR_GYM_UNIT = null;
+      prompt = `Press P to battle ${nearNpc.name}`;
+    } else {
+      let found: { unit: string; name: string } | null = null;
+      for (const gym of GYMS) {
+        const dx = this.player.x - gym.x;
+        const dy = this.player.y - gym.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 90) {
+          found = gym;
+          break;
+        }
+      }
+      if (found) {
+        (window as any).__NEAR_GYM_UNIT = found.unit;
+        prompt = `Press E to challenge ${found.name}`;
+      } else {
+        (window as any).__NEAR_GYM_UNIT = null;
       }
     }
-    if (found) {
-      (window as any).__NEAR_GYM_UNIT = found.unit;
-      (window as any).ALGMON_SET_PROMPT?.(`Press E to challenge ${found.name}`);
-    } else {
-      (window as any).__NEAR_GYM_UNIT = null;
-      (window as any).ALGMON_SET_PROMPT?.("");
-    }
+    (window as any).ALGMON_SET_PROMPT?.(prompt);
   }
 
   private launchSceneWithLoader(targetScene: string, assets: AssetDescriptor[], payload: Record<string, any> = {}) {
@@ -446,6 +455,122 @@ export default class WorldScene extends Phaser.Scene {
       payload
     });
     this.scene.pause();
+  }
+
+  private renderGymExterior(gym: (typeof GYMS)[number]) {
+    const width = gym.size?.w ?? 210;
+    const height = gym.size?.h ?? 150;
+    const baseColor = gym.color ?? 0xf97316;
+    const roofColor = gym.roofColor ?? this.shiftColor(baseColor, 0.15);
+    const trimColor = gym.trimColor ?? 0xf8fafc;
+    const doorColor = gym.doorColor ?? 0x0f172a;
+    const depth = 7.2;
+
+    const base = this.add
+      .rectangle(gym.x, gym.y, width, height, baseColor, 1)
+      .setStrokeStyle(4, trimColor, 0.95)
+      .setDepth(depth);
+    const roof = this.add
+      .rectangle(gym.x, gym.y - height / 2 + 24, width + 28, 48, roofColor, 1)
+      .setStrokeStyle(3, trimColor, 0.9)
+      .setDepth(depth + 0.01);
+
+    const towerWidth = 34;
+    const towerHeight = height - 18;
+    const towerOffset = width / 2 - towerWidth / 2 - 6;
+    const towers = [-1, 1].map((dir) =>
+      this.add
+        .rectangle(gym.x + dir * towerOffset, gym.y + 6, towerWidth, towerHeight, roofColor, 0.9)
+        .setStrokeStyle(3, trimColor, 0.8)
+        .setDepth(depth - 0.01)
+    );
+
+    const door = this.add
+      .rectangle(gym.x, gym.y + height / 2 - 42, width * 0.26, 56, doorColor, 1)
+      .setDepth(depth + 0.02);
+    const knob = this.add.circle(gym.x + (width * 0.26) / 2 - 8, gym.y + height / 2 - 42, 4, trimColor, 0.8).setDepth(depth + 0.03);
+
+    const windowColor = this.shiftColor(baseColor, 0.3);
+    const windowWidth = 32;
+    const windowHeight = 22;
+    const windowOffsetY = 14;
+    const windows = [-1, 0, 1].map((slot) =>
+      this.add
+        .rectangle(gym.x + slot * (windowWidth + 24), gym.y - windowOffsetY, windowWidth, windowHeight, windowColor, 0.92)
+        .setStrokeStyle(2, trimColor, 0.7)
+        .setDepth(depth + 0.02)
+    );
+
+    const signBg = this.add
+      .rectangle(gym.x, gym.y - height / 2 - 18, width * 0.5, 26, trimColor, 1)
+      .setStrokeStyle(2, baseColor, 0.9)
+      .setDepth(depth + 0.2);
+    const label = this.add
+      .text(gym.x, gym.y - height / 2 - 22, gym.name, {
+        fontFamily: "monospace",
+        fontSize: 12,
+        color: "#0f172a",
+        align: "center",
+        wordWrap: { width: width * 0.45 }
+      })
+      .setOrigin(0.5)
+      .setDepth(depth + 0.21);
+
+    const badge = this.add.circle(gym.x, gym.y - height / 2 + 24, 11, doorColor, 1).setDepth(depth + 0.3);
+    this.add
+      .text(badge.x, badge.y - 6, gym.unit, { fontFamily: "monospace", fontSize: 11, color: "#f8fafc" })
+      .setOrigin(0.5)
+      .setDepth(depth + 0.31);
+
+    const colliderWidth = width - 30;
+    const colliderHeight = height - 28;
+    const collider = this.add.rectangle(gym.x, gym.y + 10, colliderWidth, colliderHeight, 0xffffff, 0).setDepth(depth - 0.2);
+    this.physics.add.existing(collider, true);
+    this.obstacles.add(collider as any);
+
+    this.gymsGroup.add([...towers, roof, base, ...windows, door, knob, signBg, label, badge, collider]);
+  }
+
+  private spawnBattleNPCs() {
+    if (this.npcGroup) {
+      this.npcGroup.clear(true, true);
+      this.battleNpcs = [];
+    }
+    this.npcGroup = this.physics.add.group({ immovable: true, allowGravity: false });
+    BATTLE_NPCS.forEach((npc) => {
+      const sprite = this.physics.add
+        .sprite(npc.x, npc.y, "player", npc.frame ?? 0)
+        .setDepth(6)
+        .setImmovable(true)
+        .setSize(18, 28)
+        .setOffset(7, 16);
+      if (npc.tint) sprite.setTint(npc.tint);
+      this.npcGroup.add(sprite);
+      this.battleNpcs.push({ sprite, data: npc });
+      this.add
+        .text(npc.x, npc.y - 36, npc.name, {
+          fontFamily: "monospace",
+          fontSize: "11px",
+          color: "#0f172a",
+          backgroundColor: "rgba(255,255,255,0.7)",
+          padding: { left: 4, right: 4, top: 1, bottom: 1 }
+        })
+        .setOrigin(0.5)
+        .setDepth(6);
+      if (npc.title) {
+        this.add
+          .text(npc.x, npc.y - 20, npc.title, {
+            fontFamily: "monospace",
+            fontSize: "10px",
+            color: "#475569"
+          })
+          .setOrigin(0.5)
+          .setDepth(6);
+      }
+    });
+    if (this.player) {
+      this.physics.add.collider(this.player, this.npcGroup);
+    }
   }
 
   private spawnProfessor() {
@@ -492,6 +617,15 @@ export default class WorldScene extends Phaser.Scene {
     } else {
       this.professor.anims.play("walk-down", true);
     }
+  }
+
+  private findNearbyNpc(maxDistance: number): BattleNPC | null {
+    if (!this.player) return null;
+    for (const entry of this.battleNpcs) {
+      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, entry.sprite.x, entry.sprite.y);
+      if (dist <= maxDistance) return entry.data;
+    }
+    return null;
   }
 
   private updateProfessorAnim(targetX: number, targetY: number) {

@@ -39,7 +39,7 @@ export type LandmarkLabel = {
   opacity?: number;
 };
 
-export const WORLD_BOUNDS = { width: 3600, height: 2400 };
+export const WORLD_BOUNDS = { width: 4200, height: 3000 };
 
 export const SPAWN_POINT = { x: 420, y: 420 };
 export const PROFESSOR_SPOT = { x: 460, y: 340 };
@@ -177,32 +177,55 @@ export const ROAD_SEGMENTS: WorldRect[] = [
     mapOpacity: 0.45,
     texture: "pavers",
     accentColor: 0xfef3c7
+  },
+  {
+    x: WORLD_BOUNDS.width - 260,
+    y: 920,
+    w: 420,
+    h: 90,
+    color: 0xd6b370,
+    alpha: 0.35,
+    strokeColor: 0x92400e,
+    strokeAlpha: 0.3,
+    mapColor: "#d97706",
+    mapOpacity: 0.5,
+    texture: "boardwalk",
+    accentColor: 0xfcd34d
+  },
+  {
+    x: WORLD_BOUNDS.width / 2 + 420,
+    y: WORLD_BOUNDS.height - 420,
+    w: 720,
+    h: 120,
+    color: 0xe2c290,
+    alpha: 0.42,
+    strokeColor: 0xb45309,
+    strokeAlpha: 0.35,
+    mapColor: "#f97316",
+    mapOpacity: 0.45,
+    texture: "pavers",
+    accentColor: 0xffedd5
+  },
+  {
+    x: 1100,
+    y: WORLD_BOUNDS.height - 520,
+    w: 3200,
+    h: 80,
+    color: 0xd6b370,
+    alpha: 0.32,
+    strokeColor: 0x78350f,
+    strokeAlpha: 0.3,
+    mapColor: "#b45309",
+    mapOpacity: 0.45,
+    texture: "boardwalk",
+    accentColor: 0xfef3c7
   }
 ];
 
 export const BUILDINGS: WorldRect[] = [
   {
-    x: 360,
-    y: 320,
-    w: 200,
-    h: 130,
-    color: 0xf97316,
-    alpha: 1,
-    strokeColor: 0x9a3412,
-    solid: true,
-    depth: 8,
-    label: "Starter Lab",
-    labelOffset: { x: -80, y: -90 },
-    mapColor: "#fb923c",
-    texture: "brick",
-    accentColor: 0xfef3c7,
-    roofColor: 0xb45309,
-    windowPattern: { rows: 2, cols: 3, color: 0xf8fafc },
-    door: { width: 42, height: 50, color: 0x1e293b }
-  },
-  {
-    x: 540,
-    y: 330,
+    x: 760,
+    y: 260,
     w: 170,
     h: 130,
     color: 0x14b8a6,
@@ -418,6 +441,62 @@ export const BUILDINGS: WorldRect[] = [
     roofColor: 0xbe185d,
     windowPattern: { rows: 2, cols: 4, color: 0xfdf2f8 },
     door: { width: 70, height: 64, color: 0x831843 }
+  },
+  {
+    x: 3600,
+    y: 1060,
+    w: 220,
+    h: 170,
+    color: 0xc084fc,
+    strokeColor: 0x7c3aed,
+    solid: true,
+    depth: 8,
+    label: "Celestial Observatory",
+    labelOffset: { x: -130, y: -120 },
+    labelColor: "#fdf4ff",
+    mapColor: "#d8b4fe",
+    texture: "brick",
+    accentColor: 0xf3e8ff,
+    roofColor: 0x6d28d9,
+    windowPattern: { rows: 2, cols: 3, color: 0xfdf4ff },
+    door: { width: 60, height: 64, color: 0x4c1d95 }
+  },
+  {
+    x: 3320,
+    y: 2140,
+    w: 240,
+    h: 160,
+    color: 0x0ea5e9,
+    strokeColor: 0x0369a1,
+    solid: true,
+    depth: 8,
+    label: "Marina Terminal",
+    labelOffset: { x: -110, y: -110 },
+    labelColor: "#e0f2fe",
+    mapColor: "#38bdf8",
+    texture: "plaza",
+    accentColor: 0x7dd3fc,
+    roofColor: 0x075985,
+    windowPattern: { rows: 1, cols: 4, color: 0xe0f2fe },
+    door: { width: 70, height: 62, color: 0x0c4a6e }
+  },
+  {
+    x: 1180,
+    y: 2520,
+    w: 220,
+    h: 150,
+    color: 0xfacc15,
+    strokeColor: 0xa16207,
+    solid: true,
+    depth: 8,
+    label: "South Labs",
+    labelOffset: { x: -90, y: -110 },
+    mapColor: "#fde047",
+    texture: "brick",
+    accentColor: 0xfefce8,
+    roofColor: 0xd97706,
+    windowPattern: { rows: 2, cols: 3, color: 0xfffbeb },
+    door: { width: 64, height: 60, color: 0x92400e }
   }
 ];
 
@@ -466,6 +545,36 @@ export const WATER_ZONES: WorldRect[] = [
     mapOpacity: 0.75,
     texture: "water",
     accentColor: 0x93c5fd
+  },
+  {
+    x: 3600,
+    y: 720,
+    w: 420,
+    h: 260,
+    color: 0x2563eb,
+    alpha: 0.88,
+    strokeColor: 0x1d4ed8,
+    solid: true,
+    depth: 3,
+    mapColor: "#38bdf8",
+    mapOpacity: 0.8,
+    texture: "water",
+    accentColor: 0x93c5fd
+  },
+  {
+    x: 1400,
+    y: 2620,
+    w: 520,
+    h: 260,
+    color: 0x0ea5e9,
+    alpha: 0.85,
+    strokeColor: 0x075985,
+    solid: true,
+    depth: 3,
+    mapColor: "#67e8f9",
+    mapOpacity: 0.8,
+    texture: "water",
+    accentColor: 0x99f6e4
   }
 ];
 
@@ -514,6 +623,36 @@ export const FOREST_ZONES: WorldRect[] = [
     mapOpacity: 0.7,
     texture: "grove",
     accentColor: 0x22c55e
+  },
+  {
+    x: 3200,
+    y: 2300,
+    w: 520,
+    h: 380,
+    color: 0x0f5132,
+    alpha: 0.6,
+    strokeColor: 0x022c22,
+    solid: true,
+    depth: 2,
+    mapColor: "#166534",
+    mapOpacity: 0.7,
+    texture: "grove",
+    accentColor: 0x4ade80
+  },
+  {
+    x: 600,
+    y: 2380,
+    w: 480,
+    h: 360,
+    color: 0x14532d,
+    alpha: 0.6,
+    strokeColor: 0x052e16,
+    solid: true,
+    depth: 2,
+    mapColor: "#15803d",
+    mapOpacity: 0.7,
+    texture: "grove",
+    accentColor: 0x22c55e
   }
 ];
 
@@ -525,7 +664,11 @@ export const GRASS_PATCHES: WorldRect[] = [
   { x: 3200, y: 900, w: 260, h: 200, color: 0x16a34a, alpha: 0.18, strokeColor: 0x065f46 },
   { x: 600, y: 1600, w: 300, h: 200, color: 0x16a34a, alpha: 0.18, strokeColor: 0x065f46 },
   { x: 1800, y: 900, w: 320, h: 220, color: 0x16a34a, alpha: 0.18, strokeColor: 0x065f46 },
-  { x: 2200, y: 2100, w: 280, h: 180, color: 0x16a34a, alpha: 0.18, strokeColor: 0x065f46 }
+  { x: 2200, y: 2100, w: 280, h: 180, color: 0x16a34a, alpha: 0.18, strokeColor: 0x065f46 },
+  { x: 3600, y: 1220, w: 300, h: 180, color: 0x16a34a, alpha: 0.18, strokeColor: 0x065f46 },
+  { x: 3400, y: 2400, w: 320, h: 200, color: 0x16a34a, alpha: 0.18, strokeColor: 0x065f46 },
+  { x: 1200, y: 2600, w: 320, h: 200, color: 0x16a34a, alpha: 0.18, strokeColor: 0x065f46 },
+  { x: 700, y: 2200, w: 260, h: 180, color: 0x16a34a, alpha: 0.18, strokeColor: 0x065f46 }
 ];
 
 export const LANDMARK_LABELS: LandmarkLabel[] = [
@@ -533,5 +676,8 @@ export const LANDMARK_LABELS: LandmarkLabel[] = [
   { text: "Graphridge City", x: 1720, y: 420, color: "#c7d2fe", fontSize: 18, opacity: 0.85 },
   { text: "Exponent Forest", x: 1120, y: 950, color: "#bbf7d0", fontSize: 16, opacity: 0.85 },
   { text: "Slope Harbor", x: 2920, y: 1500, color: "#bae6fd", fontSize: 18, opacity: 0.85 },
-  { text: "Delta Plains", x: 2000, y: 1900, color: "#fde68a", fontSize: 16, opacity: 0.8 }
+  { text: "Delta Plains", x: 2000, y: 1900, color: "#fde68a", fontSize: 16, opacity: 0.8 },
+  { text: "Aurora Coast", x: 3600, y: 760, color: "#fbcfe8", fontSize: 18, opacity: 0.85 },
+  { text: "South Loop Sound", x: 1500, y: 2620, color: "#cffafe", fontSize: 16, opacity: 0.85 },
+  { text: "Verdant Verge", x: 3300, y: 2340, color: "#bbf7d0", fontSize: 16, opacity: 0.8 }
 ];
