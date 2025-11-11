@@ -1,6 +1,6 @@
 const sheetUrl = new URL("./assets/sprites/player_sheet.png", import.meta.url).href;
 const bgmMp3 = new URL("./assets/audio/bgm.mp3", import.meta.url).href;
-const bgmOgg = new URL("./assets/audio/bgm.ogg", import.meta.url).href; // optional fallback
+
 
 
 // src/App.tsx
@@ -184,7 +184,7 @@ useEffect(() => {
       preload() {
   // 3×4 sheet, each frame 32×48
   this.load.spritesheet("player", sheetUrl, { frameWidth: 32, frameHeight: 48 });
-   this.load.audio("bgm", [bgmMp3, bgmOgg]);
+   this.load.audio("bgm", [bgmMp3]);
   
 }
 
@@ -202,7 +202,23 @@ useEffect(() => {
         this.bgm = this.sound.add("bgm", { loop: true, volume: audioPrefs.musicVol });
         const playBgm = () => {
           if (!this.bgm.isPlaying) {
+            const playBgm = () => {
+          if (!this.bgm.isPlaying) {
             this.bgm.play();
+          }
+        };
+
+        if (this.sound.locked) {
+          this.sound.once(Phaser.Sound.Events.UNLOCKED, playBgm);
+          this.input.once("pointerdown", () => {
+            if (!this.sound.locked) {
+              playBgm();
+            }
+          });
+        } else {
+          playBgm();
+        }
+
           }
         };
 
