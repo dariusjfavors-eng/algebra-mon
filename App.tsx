@@ -1,9 +1,5 @@
-const sheetUrl = new URL("./assets/sprites/player_sheet.png", import.meta.url).href;
-const bgmMp3 = new URL("./assets/audio/bgm.mp3", import.meta.url).href;
-
-
-
 // src/App.tsx
+
 import { useEffect, useRef, useState } from "react";
 import Phaser from "phaser";
 import { onAuthStateChanged } from "firebase/auth";
@@ -15,6 +11,15 @@ import {
 import { loadTSV } from "./lib/sheetLoader";
 import type { QuestionRow } from "./lib/sheetLoader";
 import { QUESTIONS_TSV, CREATURES_TSV } from "./config";
+import BootScene from "./scenes/BootScene";
+import PreloadScene from "./scenes/PreloadScene";
+import LoadingScene from "./scenes/LoadingScene";
+import WorldScene from "./scenes/WorldScene";
+import UIScene from "./scenes/UIScene";
+import BattleScene from "./scenes/BattleScene";
+import QuizScene from "./scenes/QuizScene";
+import GymScene from "./scenes/GymScene";
+import ProfessorScene from "./scenes/ProfessorScene";
 import Battle from "./components/Battle";
 import StarterPick from "./components/StarterPick";
 import HUD from "./components/HUD";
@@ -22,23 +27,19 @@ import {
   loadProfile, createProfile, setStarter, grantXP, xpNeeded
 } from "./lib/profiles";
 import type { Profile } from "./lib/profiles";
-
-type GymCfg = { unit: string; x: number; y: number; threshold: number; name: string; color?: number };
-
-// --------- GYM LOCATIONS (tweak as you like) ----------
-const GYMS: GymCfg[] = [
-  { unit: "1", x: 400, y: 300, threshold: 1, name: "Unit 1 Gym", color: 0x047857 },
-  { unit: "2", x: 1000, y: 350,  threshold: 10, name: "Unit 2 Gym", color: 0x7c3aed },
-  { unit: "3", x: 1600, y: 450,  threshold: 12, name: "Unit 3 Gym", color: 0x2563eb },
-  { unit: "4", x: 600,  y: 900,  threshold: 12, name: "Unit 4 Gym", color: 0xdb2777 },
-  { unit: "5", x: 1200, y: 950,  threshold: 14, name: "Unit 5 Gym", color: 0xf59e0b },
-  { unit: "6", x: 400,  y: 1300, threshold: 14, name: "Unit 6 Gym", color: 0x10b981 },
-  { unit: "7", x: 1400, y: 1250, threshold: 16, name: "Unit 7 Gym", color: 0xef4444 },
-];
+import { GYMS } from "./data/gyms";
+import {
+  getUnitNormFromRow,
+  inferCategory,
+  profileStarterCategory,
+  shuffle
+} from "./lib/questionUtils";
+import { WORLD_BOUNDS, ROAD_SEGMENTS, WATER_ZONES, FOREST_ZONES, BUILDINGS } from "./config/world";
 
 // Boss settings
 const BOSS_QUESTIONS = 5;
 const BOSS_PASS = 4;
+const MAX_STAMINA = 10;
 
 
 
@@ -65,29 +66,35 @@ export default function App() {
   const [starterList, setStarterList] = useState<{ name: string; type?: string; spriteUrl?: string }[]>([]);
   const [showStarterPick, setShowStarterPick] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [stamina, setStamina] = useState(() => {
+    const stored = Number(localStorage.getItem("algebramon_stamina"));
+    return Number.isFinite(stored) && stored > 0 ? stored : MAX_STAMINA;
+  });
+  const [bossMisses, setBossMisses] = useState(0);
+  const [showStaminaHint, setShowStaminaHint] = useState(false);
+  const staminaRef = useRef(stamina);
 
   // UI / Settings state (React land)
-const [muted, setMuted] = useState<boolean>(() => {
+const [muted] = useState<boolean>(() => {
   // lazy init from localStorage
   return localStorage.getItem("algebramon_muted") === "1";
 });
-const [musicVol, setMusicVol] = useState<number>(() => {
+const [musicVol] = useState<number>(() => {
   const v = Number(localStorage.getItem("algebramon_musicVol"));
   return isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.6;
 });
 const [showMap, setShowMap] = useState(false);
-const [questLogOpen, setQuestLogOpen] = useState(false);
 
-// persist & push to Phaser when audio prefs change
-useEffect(() => {
-  localStorage.setItem("algebramon_muted", muted ? "1" : "0");
-  (window as any).ALGMON_AUDIO_APPLY?.({ muted, musicVol });
-}, [muted]);
-
-useEffect(() => {
-  localStorage.setItem("algebramon_musicVol", String(musicVol));
-  (window as any).ALGMON_AUDIO_APPLY?.({ muted, musicVol });
-}, [musicVol]);
+const MINI_MAP_WIDTH = 220;
+const MINI_MAP_HEIGHT = 170;
+const mapScaleX = MINI_MAP_WIDTH / WORLD_BOUNDS.width;
+const mapScaleY = MINI_MAP_HEIGHT / WORLD_BOUNDS.height;
+const projectMiniRect = (rect: { x: number; y: number; w: number; h: number }) => ({
+  x: (rect.x - rect.w / 2) * mapScaleX,
+  y: (rect.y - rect.h / 2) * mapScaleY,
+  width: rect.w * mapScaleX,
+  height: rect.h * mapScaleY
+});
 
 // persist & push to Phaser when map visibility changes
 useEffect(() => {
@@ -100,6 +107,21 @@ useEffect(() => {
   const initial = localStorage.getItem("algebramon_showMap");
   if (initial === "1") setShowMap(true);
 }, []);
+
+useEffect(() => {
+  localStorage.setItem("algebramon_stamina", String(stamina));
+  staminaRef.current = stamina;
+}, [stamina]);
+
+useEffect(() => {
+  if (stamina >= MAX_STAMINA) {
+    setShowStaminaHint(false);
+    return;
+  }
+  setShowStaminaHint(stamina < MAX_STAMINA);
+  const t = window.setTimeout(() => setShowStaminaHint(false), 3000);
+  return () => window.clearTimeout(t);
+}, [stamina]);
 
   // --------- AUTH + PROFILE + STARTERS ----------
   useEffect(() => {
@@ -150,479 +172,10 @@ useEffect(() => {
   return () => id && clearInterval(id);
 }, [showMap, pPos.x, pPos.y]);
 
-useEffect(() => {
-  localStorage.setItem("algebramon_muted", muted ? "1" : "0");
-}, [muted]);
-
-useEffect(() => {
-  localStorage.setItem("algebramon_musicVol", String(musicVol));
-}, [musicVol]);
-
   // --------- PHASER SCENE ----------
   useEffect(() => {
     if (!ready || !mountRef.current) return;
 
-    class GameScene extends Phaser.Scene {
-    constructor() {
-    super({ key: "GameScene" });
-  }
-      bgm!: Phaser.Sound.BaseSound;
-      __bgm__!: Phaser.Sound.BaseSound;
-
-      // Tell TS these exist on Scene
-      declare input: Phaser.Input.InputPlugin;
-      declare physics: Phaser.Physics.Arcade.ArcadePhysics;
-
-      cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-      lastDir: "down" | "up" | "left" | "right" = "down";
-      keys!: { [k: string]: Phaser.Input.Keyboard.Key };
-      player!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
-      worldW = 2000;
-      worldH = 1500;
-
-      gymsGroup!: Phaser.GameObjects.Container;
-      preload() {
-  // 3×4 sheet, each frame 32×48
-  this.load.spritesheet("player", sheetUrl, { frameWidth: 32, frameHeight: 48 });
-   this.load.audio("bgm", [bgmMp3]);
-  
-}
-
-
-
-      async create() {
-        // Background grid
-        this.add.grid(0, 0, this.worldW, this.worldH, 64, 64, 0x0f172a, 0.06, 0x10b981, 0.15).setOrigin(0, 0);
-    // ----- AUDIO -----
-    const audioPrefs = (window as any).__AUDIO_PREFS__ || { muted: false, musicVol: 0.6 };
-    this.sound.mute = audioPrefs.muted;
-
-    try {
-      if (this.cache.audio.exists("bgm")) {
-        this.bgm = this.sound.add("bgm", { loop: true, volume: audioPrefs.musicVol });
-        const playBgm = () => {
-          if (!this.bgm.isPlaying) {
-            const playBgm = () => {
-          if (!this.bgm.isPlaying) {
-            this.bgm.play();
-          }
-        };
-
-        if (this.sound.locked) {
-          this.sound.once(Phaser.Sound.Events.UNLOCKED, playBgm);
-          this.input.once("pointerdown", () => {
-            if (!this.sound.locked) {
-              playBgm();
-            }
-          });
-        } else {
-          playBgm();
-        }
-
-          }
-        };
-
-        if (this.sound.locked) {
-          this.sound.once(Phaser.Sound.Events.UNLOCKED, playBgm);
-          this.input.once("pointerdown", () => {
-            if (!this.sound.locked) {
-              playBgm();
-            }
-          });
-        } else {
-          playBgm();
-        }
-
-        (this as any).__bgm__ = this.bgm;
-      } else {
-        console.warn('[AUDIO] "bgm" not in cache; skipping music.');
-      }
-    } catch (err) {
-      console.warn("[AUDIO] Failed to start BGM, continuing without music:", err);
-    }
-
-    // ----- MINIMAP -----
-
-        // 1) Spawn player first
-this.player = this.physics.add.sprite(200, 200, "player", 0);
-this.player.setCollideWorldBounds(true);
-this.player.setSize(18, 28).setOffset(7, 16);
-
-// 2) Build walls after player exists
-// 2) Build walls after player exists
-const walls = this.physics.add.staticGroup();
-[
-  {x: 200, y: 160, w: 600, h: 20},
-  {x: 500, y: 320, w: 20,  h: 300},
-].forEach(s => {
-  // Use a visible fill and a clear stroke
-  const r = this.add.rectangle(s.x, s.y, s.w, s.h, 0x64748b, 0.35); // slate w/ 35% alpha
-  r.setStrokeStyle(2, 0x0f172a, 0.9);
-  r.setDepth(5); // make sure it sits above the grid background
-  this.physics.add.existing(r, true); // static body
-  walls.add(r as any);
-});
-
-this.physics.add.collider(this.player, walls);
-
-
-this.player.setCollideWorldBounds(true);
-// tighter hitbox for nicer collisions
-this.player.setSize(18, 28).setOffset(7, 16);
-
-// Animations: rows = down, left, right, up (3 frames each)
-this.anims.create({
-  key: "walk-down",
-  frames: [{ key: "player", frame: 0 }, { key: "player", frame: 1 }, { key: "player", frame: 2 }],
-  frameRate: 8,
-  repeat: -1,
-});
-this.anims.create({
-  key: "walk-left",
-  frames: [{ key: "player", frame: 3 }, { key: "player", frame: 4 }, { key: "player", frame: 5 }],
-  frameRate: 8,
-  repeat: -1,
-});
-this.anims.create({
-  key: "walk-right",
-  frames: [{ key: "player", frame: 6 }, { key: "player", frame: 7 }, { key: "player", frame: 8 }],
-  frameRate: 8,
-  repeat: -1,
-});
-this.anims.create({
-  key: "walk-up",
-  frames: [{ key: "player", frame: 9 }, { key: "player", frame: 10 }, { key: "player", frame: 11 }],
-  frameRate: 8,
-  repeat: -1,
-});
-this.input.keyboard!.on("keydown-P", () => {
-  (window as any).ALGMON_TOGGLE_HELP?.();
-});
-
-this.input.keyboard!.on("keydown-L", () => {
-  if (!this.scale.isFullscreen) this.scale.startFullscreen();
-  else this.scale.stopFullscreen();
-});
-this.input.keyboard!.on("keydown-0", () => {
-  // 0 key toggles debug (handy during layout work)
-  // @ts-ignore
-  const dbg = this.physics.world.debug;
-  // @ts-ignore
-  this.physics.world.debug = !dbg;
-});
-
-
-// idle frames by direction (first frame of each row)
-const idleFrame = { down: 1, left: 4, right: 7, up: 10 }; // middle frame looks best
-this.player.setFrame(idleFrame.down);
-
-
-
-
-        // World bounds + camera
-        this.physics.world.setBounds(0, 0, this.worldW, this.worldH);
-        this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
-        this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
-
-        // Controls
-        this.cursors = this.input.keyboard!.createCursorKeys();
-        this.keys = this.input.keyboard!.addKeys("W,A,S,D,SPACE,E") as any;
-
-        // UI hint
-        this.add.text(16, 12,
-  `SPACE: Study • E: Gym • F: Professor • T: Tutor • M: Map • P: Pause`,
-  { fontFamily: "monospace", fontSize: "12px", color: "#334155" }
-).setScrollFactor(0).setDepth(1000);
-
-
-        // ----- Draw Gyms -----
-        this.gymsGroup = this.add.container(0, 0);
-        for (const gym of GYMS) {
-          const rect = this.add.rectangle(gym.x, gym.y, 80, 60, gym.color ?? 0x0ea5e9, 1);
-          rect.setStrokeStyle(2, 0x0f172a, 1);
-          const label = this.add.text(gym.x - 36, gym.y - 40, gym.name, {
-            fontFamily: "monospace", fontSize: "12px", color: "#0f172a"
-          });
-          this.gymsGroup.add(rect);
-          this.gymsGroup.add(label);
-        }
-
-        // ----- Professor NPC (press F) -----
-const prof = this.add.rectangle(460, 300, 18, 26, 0x9333ea, 1);
-prof.setStrokeStyle(2, 0x4c1d95, 1);
-this.add.text(442, 278, "Prof", {
-  fontFamily: "monospace",
-  fontSize: "10px",
-  color: "#0f172a"
-});
-
-// Press F near professor = guaranteed Unit 1 question
-this.input.keyboard!.on("keydown-F", async () => {
-  const dist = Math.hypot(this.player.x - prof.x, this.player.y - prof.y);
-  if (dist > 50) return; // must stand close
-
-  try {
-    const all = await loadTSV(QUESTIONS_TSV);
-    if (!all?.length) return alert("No questions loaded");
-
-    const pool = all.filter(r => getUnitNormFromRow(r) === "1");
-    if (!pool.length) return alert("Need Unit 1 questions first!");
-
-    const q = pool[Math.floor(Math.random() * pool.length)];
-    (window as any).__lastQ = q;
-    (window as any).ALGMON_SHOW_Q?.(q);
-  } catch (e) {
-    console.error(e);
-    alert("Professor error — check console");
-  }
-});
-
-this.input.keyboard!.on("keydown-M", () => {
-  (window as any).ALGMON_TOGGLE_MINIMAP?.();
-});
-
-
-        // ----- Tall Grass Zones (auto-encounter) -----
-const grassColor = 0x16a34a;
-const grassAlpha = 0.15;
-const grassZones = this.add.container(0, 0);
-
-// ----- Tutor Station (press T) -----
-const tutor = this.add.rectangle(420, 260, 24, 24, 0x2563eb, 1);
-tutor.setStrokeStyle(2, 0x0f172a, 1);
-this.add.text(404, 238, "Tutor", { fontFamily: "monospace", fontSize: "10px", color: "#0f172a" });
-
-this.input.keyboard!.on("keydown-T", async () => {
-  // near the tutor station?
-  const nearTutor = Math.hypot(this.player.x - tutor.x, this.player.y - tutor.y) < 50;
-
-  // also check: are we near a gym? (so tutor can be unit-specific)
-  let nearGymUnit: string | null = null;
-  for (const gym of GYMS) {
-    const d = Math.hypot(this.player.x - gym.x, this.player.y - gym.y);
-    if (d < 80) { nearGymUnit = gym.unit; break; }
-  }
-
-  if (!nearTutor && !nearGymUnit) {
-    return alert("Find a Tutor station or stand near a Gym for targeted tips (press T).");
-  }
-
-  try {
-    const all = await loadTSV(QUESTIONS_TSV);
-    if (!all?.length) return alert("No questions loaded.");
-
-    const pool = nearGymUnit
-      ? all.filter(r => getUnitNormFromRow(r) === nearGymUnit)
-      : all;
-
-    if (!pool.length) {
-      return alert(nearGymUnit
-        ? `No questions found for Unit ${nearGymUnit} yet.`
-        : "No questions available.");
-    }
-
-    const row = pool[Math.floor(Math.random() * pool.length)];
-    (window as any).__lastQ = row;
-
-    const explanation =
-      (row.explanation ?? row.hint ?? row.worked_solution ?? "").toString().trim();
-
-    if (explanation) {
-      alert(
-        (nearGymUnit ? `Tutor Tip (Unit ${nearGymUnit}):\n` : "Tutor Tip:\n") +
-        explanation
-      );
-    } else {
-      const stem = (row.question ?? "").toString();
-      const fallback =
-        stem.includes("=")
-          ? "Step plan: (1) Undo addition/subtraction, (2) Undo multiplication/division, (3) Check."
-          : "Look for slope & intercept or combine like terms first.";
-      alert((nearGymUnit ? `Tutor Tip (Unit ${nearGymUnit}):\n` : "Tutor Tip:\n") + fallback);
-    }
-  } catch (e) {
-    console.error("tutor error", e);
-    alert("Tutor unavailable (check console).");
-  }
-});
-
-// make a few patches
-const patches = [
-  { x: 300, y: 500, w: 220, h: 160 },
-  { x: 1100, y: 250, w: 260, h: 200 },
-  { x: 1500, y: 1000, w: 320, h: 220 },
-];
-for (const p of patches) {
-  const r = this.add.rectangle(p.x, p.y, p.w, p.h, grassColor, grassAlpha);
-  r.setStrokeStyle(1, 0x065f46, 0.8);
-  grassZones.add(r);
-}
-
-// physics bodies to detect overlap
-this.physics.add.existing(grassZones);
-(grassZones.list as Phaser.GameObjects.Rectangle[]).forEach(rect => {
-  this.physics.add.existing(rect, true);
-});
-
-// encounter tick (small chance per second while inside)
-let encounterCooldown = 0;
-this.time.addEvent({
-  delay: 400, loop: true, callback: async () => {
-    if ((window as any).__BOSS_LOCK) return;
-    if (!this.player.body) return;
-
-    const inGrass = (grassZones.list as Phaser.GameObjects.Rectangle[]).some(r => {
-      const dx = Math.abs(this.player.x - r.x);
-      const dy = Math.abs(this.player.y - r.y);
-      return dx < r.width / 2 && dy < r.height / 2;
-    });
-
-    if (!inGrass) { encounterCooldown = 0; return; }
-    if (encounterCooldown > 0) { encounterCooldown -= 1; return; }
-
-    // ~15% chance each tick while moving
-    const moving = Math.hypot(this.player.body.velocity.x, this.player.body.velocity.y) > 5;
-    if (moving && Math.random() < 0.15) {
-      encounterCooldown = 5; // brief cooldown
-      try {
-        const rows = await loadTSV(QUESTIONS_TSV);
-        if (!rows?.length) return;
-        const q = rows[Math.floor(Math.random() * rows.length)];
-        (window as any).__lastQ = q;
-        (window as any).ALGMON_SHOW_Q?.(q);
-      } catch (e) {
-        console.error("encounter load error", e);
-      }
-    }
-  }
-});
-
-
-        // Study: SPACE → random question
-this.input.keyboard!.on("keydown-SPACE", async () => {
-  if ((window as any).__BOSS_LOCK) return; // blocked during boss
-  try {
-    console.log("[SPACE] Loading questions from", QUESTIONS_TSV);
-    const rows = await loadTSV(QUESTIONS_TSV);
-    console.log("[SPACE] Loaded rows:", rows?.length);
-
-    if (!rows || rows.length === 0) {
-      alert("No questions loaded. Check your QUESTIONS_TSV URL in src/config.ts");
-      // Fallback sample so you can keep testing:
-      const sample = {
-        question: "Solve: 2x + 5 = 17",
-        answer: "6",
-        distractors: "7|5|4",
-        unit_id: "1",
-        standard: "A.REI.3",
-      };
-      (window as any).__lastQ = sample;
-      (window as any).ALGMON_SHOW_Q?.(sample);
-      return;
-    }
-
-    const q = rows[Math.floor(Math.random() * rows.length)];
-    (window as any).__lastQ = q;
-    (window as any).ALGMON_SHOW_Q?.(q);
-  } catch (e) {
-    console.error("Failed to load questions TSV:", e);
-    alert("Could not load questions (see console). Using a sample instead.");
-    const sample = {
-      question: "Solve: 2x + 5 = 17",
-      answer: "6",
-      distractors: "7|5|4",
-      unit_id: "1",
-      standard: "A.REI.3",
-    };
-    (window as any).__lastQ = sample;
-    (window as any).ALGMON_SHOW_Q?.(sample);
-  }
-});
-
-
-        // Enter Gym: E when near
-        this.input.keyboard!.on("keydown-E", () => {
-          if ((window as any).__BOSS_LOCK) return;
-          const near = (window as any).__NEAR_GYM_UNIT as string | null;
-          if (near) (window as any).ALGMON_TRY_GYM?.(near);
-        });
-      }
-
-      update() {
-         // Early guards so update doesn't run before create finished
-  if (!this.player || !this.cursors || !this.keys) return;
- // Movement
-  const speed = 180;
-  let vx = 0, vy = 0;
-  let playing = false;
-
-// horizontal
-if (this.cursors.left?.isDown || this.keys["A"].isDown) {
-  vx = -speed;
-  this.player.anims.play("walk-left", true);
-  this.lastDir = "left";
-  playing = true;
-} else if (this.cursors.right?.isDown || this.keys["D"].isDown) {
-  vx = speed;
-  this.player.anims.play("walk-right", true);
-  this.lastDir = "right";
-  playing = true;
-}
-
-// vertical
-if (this.cursors.up?.isDown || this.keys["W"].isDown) {
-  vy = -speed;
-  this.player.anims.play("walk-up", true);
-  this.lastDir = "up";
-  playing = true;
-} else if (this.cursors.down?.isDown || this.keys["S"].isDown) {
-  vy = speed;
-  this.player.anims.play("walk-down", true);
-  this.lastDir = "down";
-  playing = true;
-}
-
-// …after you decide vx, vy from inputs…
-
-// --- normalize diagonal speed so diagonals aren't faster ---
-const mag = Math.hypot(vx, vy);
-if (mag > 0) {
-  const scale = speed / mag; // 'speed' is your const speed = 180;
-  vx *= scale;
-  vy *= scale;
-}
-this.player.setVelocity(vx, vy);
-// -----------------------------------------------------------
-
-// idle (face last direction)
-if (!playing) {
-  this.player.anims.stop();
-  const idleFrame = { down: 1, left: 4, right: 7, up: 10 } as const;
-  this.player.setFrame(idleFrame[this.lastDir]);
-}
-
-// expose player pos for React minimap
-(window as any).__PLAYER_POS = { x: this.player.x, y: this.player.y };
-
-
-        // Proximity to nearest gym
-        let found: GymCfg | null = null;
-        for (const gym of GYMS) {
-          const dx = this.player.x - gym.x;
-          const dy = this.player.y - gym.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < 70) { found = gym; break; }
-        }
-        if (found) {
-          (window as any).__NEAR_GYM_UNIT = found.unit;
-          (window as any).ALGMON_SET_PROMPT?.(`Press E to challenge ${found.name}`);
-        } else {
-          (window as any).__NEAR_GYM_UNIT = null;
-          (window as any).ALGMON_SET_PROMPT?.("");
-        }
-      }
-    }
-     // Make initial audio/map prefs visible to the scene
     (window as any).__AUDIO_PREFS__ = { muted, musicVol };
     (window as any).__MAP_PREFS__ = { showMap };
 
@@ -632,19 +185,40 @@ if (!playing) {
       height: 600,
       parent: mountRef.current,
       physics: { default: "arcade" },
-      scene: [GameScene],
+      scene: [
+        BootScene,
+        PreloadScene,
+        LoadingScene,
+        WorldScene,
+        UIScene,
+        BattleScene,
+        QuizScene,
+        GymScene,
+        ProfessorScene
+      ],
       backgroundColor: "#f1f5f9",
-        audio: { disableWebAudio: false, noAudio: false } // explicit
+      audio: { disableWebAudio: false, noAudio: false }
     });
 
-    // Bridges: Phaser → React
-    (window as any).ALGMON_TOGGLE_HELP = () => setShowHelp(v => !v);
-    (window as any).ALGMON_TOGGLE_MINIMAP = () => setShowMap(v => !v);
+    (window as any).ALGMON_TOGGLE_HELP = () => setShowHelp((v) => !v);
     (window as any).ALGMON_SHOW_Q = (q: QuestionRow) => { setQRow(q); setQOpen(true); };
+    (window as any).ALGMON_SET_SLOWDOWN = (active: boolean) => {
+      (window as any).__PLAYER_SLOW = active;
+    };
     (window as any).ALGMON_SET_PROMPT = (s: string) => { setNearGymText(s); };
-        // React <-> Phaser bridges
+
+    const toggleMinimap = (next?: boolean) => {
+      const current = (window as any).__MAP_PREFS__?.showMap ?? false;
+      const value = typeof next === "boolean" ? next : !current;
+      (window as any).__MAP_PREFS__ = { showMap: value };
+      setShowMap(value);
+    };
+
+    (window as any).ALGMON_TOGGLE_MINIMAP = () => toggleMinimap();
+    (window as any).ALGMON_SET_MINIMAP_VISIBLE = (vis: boolean) => toggleMinimap(vis);
+
     (window as any).ALGMON_AUDIO_APPLY = (opts: { muted?: boolean; musicVol?: number }) => {
-      const scene = game.scene.getScene("GameScene") as any;
+      const scene = game.scene.getScene("WorldScene") as any;
       if (!scene || !scene.sound) return;
       if (typeof opts.muted === "boolean") {
         scene.sound.mute = opts.muted;
@@ -655,35 +229,29 @@ if (!playing) {
       }
     };
 
-    (window as any).ALGMON_SET_MINIMAP_VISIBLE = (vis: boolean) => {
-      (window as any).__MAP_PREFS__ = { showMap: vis };
-    };
-
-    // optional: a keyboard-driven toggle already exists (keydown-M)
-    // wire its implementation to state if you want React to know when 'M' toggles:
-    (window as any).ALGMON_TOGGLE_MINIMAP = () => {
-      const next = !((window as any).__MAP_PREFS__?.showMap ?? false);
-      (window as any).__MAP_PREFS__ = { showMap: next };
-      // tell React state to follow (no-op if React isn't mounted yet)
-      try { 
-        // you already have setShowMap in scope in this component,
-        // so just call it:
-        setShowMap(next);
-      } catch {}
-    };
     (window as any).ALGMON_TRY_GYM = async (unit: string) => {
       if (!auth.currentUser) return;
+      const currentStamina = staminaRef.current;
+      if (currentStamina <= 0) {
+        alert("You're out of stamina! Answer 5 study questions (SPACE) to refuel before attempting a gym.");
+        return;
+      }
+      if (currentStamina < MAX_STAMINA) {
+        const proceed = window.confirm(
+          "Your stamina isn't full. Study (SPACE) to refill before a gym. Enter anyway?"
+        );
+        if (!proceed) return;
+      }
 
-      // mastery check for that unit
-  const qRef = query(
-  collection(db, "game_logs"),
-  where("uid", "==", auth.currentUser.uid),
-  where("unitNorm", "==", unit),  // ✅ compare normalized unit
-  where("correct", "==", true),
-  orderBy("ts", "desc"),
-  limit(1000)
-);
-console.log("[GYM] checking mastery for unit", unit);
+      const qRef = query(
+        collection(db, "game_logs"),
+        where("uid", "==", auth.currentUser.uid),
+        where("unitNorm", "==", unit),
+        where("correct", "==", true),
+        orderBy("ts", "desc"),
+        limit(1000)
+      );
+      console.log("[GYM] checking mastery for unit", unit);
       const snap = await getDocs(qRef);
       const correctCount = snap.size;
       const cfg = GYMS.find(g => g.unit === unit)!;
@@ -692,8 +260,7 @@ console.log("[GYM] checking mastery for unit", unit);
         alert(`You need ${cfg.threshold} correct for Unit ${unit}. You have ${correctCount}.`);
         return;
       }
-
-      // start boss
+//start boss
       (window as any).__BOSS_LOCK = true;
       setBossUnit(unit);
       setBossActive(true);
@@ -712,23 +279,37 @@ console.log("[GYM] checking mastery for unit", unit);
       shuffle(pool);
       const queue = pool.slice(0, BOSS_QUESTIONS);
       setBossQueue(queue);
+      setBossMisses(0);
       (window as any).ALGMON_SHOW_Q(queue[0]);
     };
 
     return () => {
       (window as any).ALGMON_SHOW_Q = undefined;
       (window as any).ALGMON_SET_PROMPT = undefined;
+      (window as any).ALGMON_SET_SLOWDOWN = undefined;
       (window as any).ALGMON_TRY_GYM = undefined;
       (window as any).__NEAR_GYM_UNIT = null;
       (window as any).__BOSS_LOCK = false;
       game.destroy(true);
     };
   }, [ready]);
-
   // --------- HANDLE ANSWER PICK (normal or boss) ----------
   async function handlePick(choice: string) {
     if (!qRow) return;
     const ok = String(choice).trim() === String(qRow.answer).trim();
+    let newStamina = stamina;
+    if (!ok) {
+      (window as any).ALGMON_SET_SLOWDOWN?.(true);
+      setTimeout(() => (window as any).ALGMON_SET_SLOWDOWN?.(false), 6000);
+      newStamina = Math.max(0, stamina - 2);
+      if (newStamina !== stamina) setStamina(newStamina);
+      if (newStamina <= 0) {
+        alert("You ran out of stamina! Study (press SPACE) and answer 5 questions correctly to refill.");
+      }
+    } else {
+      newStamina = Math.min(MAX_STAMINA, stamina + 2);
+      if (newStamina !== stamina) setStamina(newStamina);
+    }
     const wasBoss = bossActive;
     const currentBossUnit = bossUnit;
 
@@ -738,6 +319,18 @@ console.log("[GYM] checking mastery for unit", unit);
     // Normal study feedback (XP message will be shown below after we compute the bonus)
 if (!wasBoss && !ok) {
   alert(`Try again. Answer: ${qRow.answer}`);
+  if (profile && auth.currentUser) {
+    try {
+      const ref = doc(db, "profiles", profile.uid);
+      await updateDoc(ref, {
+        xp: Math.max(0, (profile.xp ?? 0) - 2),
+        updatedAt: Date.now()
+      });
+      setProfile((p) => (p ? { ...p, xp: Math.max(0, (p.xp ?? 0) - 2) } : p));
+    } catch (err) {
+      console.error("xp penalty error", err);
+    }
+  }
 }
 
 
@@ -806,6 +399,18 @@ if (!wasBoss && ok && profile && auth.currentUser) {
     if (wasBoss && currentBossUnit) {
       const nextCorrect = ok ? bossCorrect + 1 : bossCorrect;
       const nextIndex = bossIndex + 1;
+      const nextMisses = ok ? bossMisses : bossMisses + 1;
+      setBossMisses(nextMisses);
+      let failed = false;
+      let failReason = "";
+      if (!ok && nextMisses >= 3) {
+        failed = true;
+        failReason = "Too many incorrect answers (3 strikes). Study more and try again!";
+      }
+      if (!failed && newStamina <= 0) {
+        failed = true;
+        failReason = "You ran out of stamina during the gym battle. Study questions to refill before retrying.";
+      }
 
       // Log boss question attempt
       try {
@@ -816,6 +421,15 @@ if (!wasBoss && ok && profile && auth.currentUser) {
           });
         }
       } catch (e) { console.error("boss log error", e); }
+
+      if (failed) {
+        if (newStamina !== 0) setStamina(0);
+        setBossActive(false);
+        setBossUnit(null);
+        (window as any).__BOSS_LOCK = false;
+        alert(failReason);
+        return;
+      }
 
       if (nextIndex < BOSS_QUESTIONS) {
         setBossCorrect(nextCorrect);
@@ -893,7 +507,29 @@ if (!wasBoss && ok && profile && auth.currentUser) {
         level={level}
         xp={xp}
         next={xpNeeded(level)}
+        stamina={stamina}
+        maxStamina={MAX_STAMINA}
       />
+
+      <button
+        onClick={() => setShowMap((v) => !v)}
+        style={{
+          position: "fixed",
+          left: 20,
+          bottom: 20,
+          padding: "8px 14px",
+          fontFamily: "monospace",
+          fontSize: 12,
+          borderRadius: 999,
+          border: "1px solid #475569",
+          background: "rgba(15,23,42,.9)",
+          color: "#f1f5f9",
+          cursor: "pointer",
+          zIndex: 1350,
+        }}
+      >
+        {showMap ? "Hide Map (M)" : "Show Map (M)"}
+      </button>
 
       {/* Badge strip */}
 {Array.isArray(profile?.badges) && profile!.badges.length > 0 && (
@@ -974,6 +610,12 @@ if (!wasBoss && ok && profile && auth.currentUser) {
     <div style={{ fontSize: 13, opacity: .9 }}>
       {`Question ${bossIndex + 1} of ${BOSS_QUESTIONS}`}
     </div>
+    <div style={{ fontSize: 12, color: "#f87171", marginTop: 6 }}>
+      {`Misses: ${bossMisses} / 3`}
+    </div>
+    <div style={{ fontSize: 12, color: "#38bdf8" }}>
+      {`Stamina: ${stamina}/${MAX_STAMINA}`}
+    </div>
     <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
       {Array.from({ length: BOSS_QUESTIONS }).map((_, i) => {
         const filled = i < bossIndex;
@@ -1004,6 +646,26 @@ if (!wasBoss && ok && profile && auth.currentUser) {
           zIndex: 1000,
         }}>
           {nearGymText}
+          {stamina < MAX_STAMINA && " • Stamina low! Study (SPACE) to refill before gyms."}
+        </div>
+      )}
+      {showStaminaHint && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 80,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(15,23,42,0.95)",
+            color: "#e2e8f0",
+            padding: "10px 16px",
+            borderRadius: 999,
+            fontSize: 13,
+            border: "1px solid rgba(148,163,184,.5)",
+            zIndex: 1200,
+          }}
+        >
+          Correct answers restore +2 stamina. Keep studying to stay battle-ready!
         </div>
       )}
       {/* Modals */}
@@ -1020,26 +682,88 @@ if (!wasBoss && ok && profile && auth.currentUser) {
       Mini-Map (press M)
     </div>
     {/* Mini-map sized view */}
-    <svg width={220} height={170} viewBox="0 0 220 170" style={{ display: "block" }}>
+    <svg
+      width={MINI_MAP_WIDTH}
+      height={MINI_MAP_HEIGHT}
+      viewBox={`0 0 ${MINI_MAP_WIDTH} ${MINI_MAP_HEIGHT}`}
+      style={{ display: "block" }}
+    >
       {/* background */}
-      <rect x="0" y="0" width="220" height="170" fill="#0b1220" stroke="#1f2937" />
-      {/* gyms */}
-      {GYMS.map(g => {
-        const sx = 220 / 2000, sy = 170 / 1500;
-        const gx = g.x * sx, gy = g.y * sy;
+      <rect x="0" y="0" width={MINI_MAP_WIDTH} height={MINI_MAP_HEIGHT} fill="#0b1220" stroke="#1f2937" />
+      {ROAD_SEGMENTS.map((road, idx) => {
+        const proj = projectMiniRect(road);
         return (
-          <g key={g.unit}>
-            <rect x={gx - 4} y={gy - 3} width={8} height={6}
-                  fill="#22c55e" stroke="#052e16" />
-          </g>
+          <rect
+            key={`road-${idx}`}
+            x={proj.x}
+            y={proj.y}
+            width={proj.width}
+            height={proj.height}
+            fill={road.mapColor ?? "#b45309"}
+            opacity={road.mapOpacity ?? 0.45}
+          />
         );
       })}
-      {/* player */}
-      {(() => {
-        const sx = 220 / 2000, sy = 170 / 1500;
-        const px = pPos.x * sx, py = pPos.y * sy;
-        return <circle cx={px} cy={py} r={3.5} fill="#60a5fa" stroke="#1e40af" />;
-      })()}
+      {FOREST_ZONES.map((zone, idx) => {
+        const proj = projectMiniRect(zone);
+        return (
+          <rect
+            key={`forest-${idx}`}
+            x={proj.x}
+            y={proj.y}
+            width={proj.width}
+            height={proj.height}
+            fill={zone.mapColor ?? "#14532d"}
+            opacity={zone.mapOpacity ?? 0.45}
+          />
+        );
+      })}
+      {WATER_ZONES.map((zone, idx) => {
+        const proj = projectMiniRect(zone);
+        return (
+          <rect
+            key={`water-${idx}`}
+            x={proj.x}
+            y={proj.y}
+            width={proj.width}
+            height={proj.height}
+            fill={zone.mapColor ?? "#38bdf8"}
+            opacity={zone.mapOpacity ?? 0.75}
+          />
+        );
+      })}
+      {BUILDINGS.map((building, idx) => {
+        const proj = projectMiniRect(building);
+        return (
+          <rect
+            key={`bldg-${idx}`}
+            x={proj.x}
+            y={proj.y}
+            width={proj.width}
+            height={proj.height}
+            fill={building.mapColor ?? "#94a3b8"}
+            opacity={0.85}
+            stroke="#0f172a"
+            strokeWidth={0.3}
+          />
+        );
+      })}
+      {GYMS.map((g) => {
+        const gx = g.x * mapScaleX;
+        const gy = g.y * mapScaleY;
+        return (
+          <rect
+            key={`gym-${g.unit}`}
+            x={gx - 4}
+            y={gy - 3}
+            width={8}
+            height={6}
+            fill="#22c55e"
+            stroke="#052e16"
+          />
+        );
+      })}
+      <circle cx={pPos.x * mapScaleX} cy={pPos.y * mapScaleY} r={3.5} fill="#60a5fa" stroke="#1e40af" />
     </svg>
 
     <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
@@ -1055,56 +779,4 @@ if (!wasBoss && ok && profile && auth.currentUser) {
 
     </>
   );
-}
-
-// ---------- Utils ----------
-// ---------- Category Helpers (for XP bonus) ----------
-type QCategory = "graphing" | "tables" | "algebraic";
-
-// Infer question category from standard / text
-function inferCategory(row: any): QCategory {
-  const q = (row?.question || "").toLowerCase();
-  const std = (row?.standard || "").toUpperCase();
-
-  // Standards first (tweak anytime)
-  if (/(F-IF|F-LE|RATE|SLOPE|INTERCEPT|GRAPH)/.test(std)) return "graphing";
-  if (/(TABLE|MAPPING|VALUES|F-IF\.1)/.test(std)) return "tables";
-  if (/(A-REI|SOLVE|SIMPLIFY|EQUATION|A-CED|A-SSE|A-APR)/.test(std)) return "algebraic";
-
-  // Text fallbacks
-  if (q.includes("table") || q.includes("mapping") || q.includes("values")) return "tables";
-  if (q.includes("graph") || q.includes("slope") || q.includes("intercept")) return "graphing";
-  return "algebraic";
-}
-
-// Map starter.type to a category
-function profileStarterCategory(p?: Profile | null): QCategory | null {
-  const t = p?.starter?.type?.toLowerCase() || "";
-  if (t.includes("graph")) return "graphing";
-  if (t.includes("table")) return "tables";
-  if (t.includes("algebra")) return "algebraic";
-  return null;
-}
-
-function shuffle<T>(a: T[]) {
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-}
-
-function unitNorm(val: any): string {
-  const s = String(val ?? "").toLowerCase();
-  const m = s.match(/\d+/);
-  return m ? String(Number(m[0])) : "";
-}
-
-function getUnitNormFromRow(row: any): string {
-  // try several possible column names just in case the sheet header changes
-  const candidates = [row?.unit_id, row?.unit, row?.Unit, row?.unitId];
-  for (const v of candidates) {
-    const m = String(v ?? "").toLowerCase().match(/\d+/);
-    if (m) return String(Number(m[0])); // "01" -> "1"
-  }
-  return "";
 }
