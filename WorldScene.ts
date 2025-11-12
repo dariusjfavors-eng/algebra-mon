@@ -58,6 +58,7 @@ export default class WorldScene extends Phaser.Scene {
   obstacles!: Phaser.Physics.Arcade.StaticGroup;
   npcGroup!: Phaser.Physics.Arcade.Group;
   battleNpcs: { sprite: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody; data: BattleNPC }[] = [];
+  harborBuildingParts: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super({ key: "WorldScene" });
@@ -119,7 +120,17 @@ export default class WorldScene extends Phaser.Scene {
     ROAD_SEGMENTS.forEach((road) => addFeatureRect(road, 1));
     FOREST_ZONES.forEach((zone) => addFeatureRect(zone, 2));
     WATER_ZONES.forEach((zone) => addFeatureRect(zone, 3));
-    BUILDINGS.forEach((building) => addFeatureRect(building, 7));
+    this.harborBuildingParts = [];
+    BUILDINGS.forEach((building) => {
+      const fitted = this.fitBuildingToTerrain(building);
+      if (fitted.label === "Harbor HQ") {
+        const scaled = this.scaleRect(fitted, 0.9);
+        this.harborBuildingParts = this.renderHarborBuilding(scaled);
+        this.decorateHarborBoat(scaled);
+        return;
+      }
+      addFeatureRect(fitted, 7);
+    });
 
     LANDMARK_LABELS.forEach((mark: LandmarkLabel) => {
       this.add
@@ -136,7 +147,9 @@ export default class WorldScene extends Phaser.Scene {
     this.player = this.physics.add.sprite(SPAWN_POINT.x, SPAWN_POINT.y, "player", 0);
     this.player.setCollideWorldBounds(true);
     this.player.setSize(18, 28).setOffset(7, 16);
-    this.player.setDepth(5);
+    this.player.setDepth(this.player.y + 10);
+
+    (window as any).ALGMON_WARP_PLAYER = (pos: { x: number; y: number }) => this.playWarpAnimation(pos);
 
     this.physics.world.setBounds(0, 0, this.worldW, this.worldH);
     this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
@@ -370,6 +383,10 @@ export default class WorldScene extends Phaser.Scene {
     this.input.keyboard!.on("keydown-U", () => {
       this.launchSceneWithLoader("QuizScene", QuizScene.ASSETS, { message: "Study tips incoming..." });
     });
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      (window as any).ALGMON_WARP_PLAYER = undefined;
+    });
   }
 
   update() {
@@ -418,6 +435,10 @@ export default class WorldScene extends Phaser.Scene {
       this.player.setFrame(idleFrame[this.lastDir]);
     }
 
+    this.player.setDepth(this.player.y + 10);
+    if (this.professor) this.professor.setDepth(this.professor.y + 5);
+    this.battleNpcs.forEach(({ sprite }) => sprite.setDepth(sprite.y + 5));
+
     (window as any).__PLAYER_POS = { x: this.player.x, y: this.player.y };
 
     let prompt = "";
@@ -457,6 +478,31 @@ export default class WorldScene extends Phaser.Scene {
     this.scene.pause();
   }
 
+  private playWarpAnimation(pos: { x: number; y: number }) {
+    if (!pos) return;
+    const flash = this.add.rectangle(this.player.x, this.player.y, 48, 48, 0x38bdf8, 0.6).setDepth(this.player.depth + 5);
+    this.tweens.add({
+      targets: flash,
+      scaleX: 0.4,
+      scaleY: 0.4,
+      alpha: 0,
+      duration: 180,
+      onComplete: () => flash.destroy()
+    });
+    this.time.delayedCall(180, () => {
+      this.player.setPosition(pos.x, pos.y);
+      this.player.body?.stop();
+      this.cameras.main.pan(pos.x, pos.y, 220, "Sine.easeInOut");
+      this.tweens.add({
+        targets: this.player,
+        alpha: { from: 0.2, to: 1 },
+        scale: { from: 1.2, to: 1 },
+        duration: 220,
+        ease: "Sine.easeOut"
+      });
+    });
+  }
+
   private renderGymExterior(gym: (typeof GYMS)[number]) {
     const width = gym.size?.w ?? 210;
     const height = gym.size?.h ?? 150;
@@ -464,49 +510,77 @@ export default class WorldScene extends Phaser.Scene {
     const roofColor = gym.roofColor ?? this.shiftColor(baseColor, 0.15);
     const trimColor = gym.trimColor ?? 0xf8fafc;
     const doorColor = gym.doorColor ?? 0x0f172a;
-    const depth = 7.2;
+    const depth = gym.y;
+    const detailDepth = depth + 4;
 
-    const base = this.add
-      .rectangle(gym.x, gym.y, width, height, baseColor, 1)
-      .setStrokeStyle(4, trimColor, 0.95)
-      .setDepth(depth);
-    const roof = this.add
-      .rectangle(gym.x, gym.y - height / 2 + 24, width + 28, 48, roofColor, 1)
-      .setStrokeStyle(3, trimColor, 0.9)
-      .setDepth(depth + 0.01);
+    const halfW = width / 2;
+    const halfH = height / 2;
+    const left = gym.x - halfW;
+    const top = gym.y - halfH;
+    const gfx = this.add.graphics();
+    gfx.setDepth(depth - 1);
+    gfx.fillStyle(this.shiftColor(baseColor, -0.6), 0.35);
+    gfx.fillEllipse(gym.x + 18, gym.y + halfH + 8, width * 0.95, 18);
 
-    const towerWidth = 34;
-    const towerHeight = height - 18;
-    const towerOffset = width / 2 - towerWidth / 2 - 6;
-    const towers = [-1, 1].map((dir) =>
-      this.add
-        .rectangle(gym.x + dir * towerOffset, gym.y + 6, towerWidth, towerHeight, roofColor, 0.9)
-        .setStrokeStyle(3, trimColor, 0.8)
-        .setDepth(depth - 0.01)
-    );
+    gfx.setDepth(depth);
+    gfx.fillStyle(baseColor, 1);
+    gfx.fillRoundedRect(left, top, width, height, 10);
+    gfx.lineStyle(4, trimColor, 0.3);
+    gfx.strokeRoundedRect(left, top, width, height, 10);
 
-    const door = this.add
-      .rectangle(gym.x, gym.y + height / 2 - 42, width * 0.26, 56, doorColor, 1)
-      .setDepth(depth + 0.02);
-    const knob = this.add.circle(gym.x + (width * 0.26) / 2 - 8, gym.y + height / 2 - 42, 4, trimColor, 0.8).setDepth(depth + 0.03);
+    gfx.fillStyle(this.shiftColor(baseColor, 0.08), 1);
+    gfx.fillRoundedRect(left + 10, top + 10, width - 20, height - 26, 8);
 
-    const windowColor = this.shiftColor(baseColor, 0.3);
-    const windowWidth = 32;
+    gfx.fillStyle(this.shiftColor(baseColor, -0.12), 1);
+    gfx.fillRoundedRect(left + width - width * 0.28, top + 18, width * 0.24, height - 40, 8);
+
+    gfx.fillStyle(roofColor, 1);
+    gfx.fillRoundedRect(left - 18, top - 12, width + 36, 44, 12);
+    gfx.lineStyle(3, trimColor, 0.55);
+    gfx.strokeRoundedRect(left - 18, top - 12, width + 36, 44, 12);
+
+    gfx.fillStyle(this.shiftColor(roofColor, -0.15), 1);
+    gfx.fillRoundedRect(left - 22, top + 24, width + 44, 14, 8);
+    gfx.fillStyle(this.shiftColor(roofColor, 0.2), 0.35);
+    gfx.fillRoundedRect(left + 16, top + 2, width - 32, 10, 4);
+
+    gfx.fillStyle(this.shiftColor(trimColor, -0.2), 0.4);
+    [-1, 0, 1].forEach((slot) => {
+      const colX = gym.x + slot * (width / 3.2) - 6;
+      gfx.fillRoundedRect(colX, top + 18, 12, height - 42, 4);
+    });
+
+    const windowColor = this.shiftColor(baseColor, 0.28);
+    const windowWidth = 34;
     const windowHeight = 22;
-    const windowOffsetY = 14;
-    const windows = [-1, 0, 1].map((slot) =>
-      this.add
-        .rectangle(gym.x + slot * (windowWidth + 24), gym.y - windowOffsetY, windowWidth, windowHeight, windowColor, 0.92)
-        .setStrokeStyle(2, trimColor, 0.7)
-        .setDepth(depth + 0.02)
-    );
+    const windowY = top + height * 0.3;
+    [-1, 0, 1].forEach((slot) => {
+      const wx = gym.x + slot * (windowWidth + 26) - windowWidth / 2;
+      gfx.fillStyle(windowColor, 0.95);
+      gfx.fillRoundedRect(wx, windowY, windowWidth, windowHeight, 4);
+      gfx.lineStyle(1.5, trimColor, 0.35);
+      gfx.strokeRoundedRect(wx, windowY, windowWidth, windowHeight, 4);
+    });
 
-    const signBg = this.add
-      .rectangle(gym.x, gym.y - height / 2 - 18, width * 0.5, 26, trimColor, 1)
-      .setStrokeStyle(2, baseColor, 0.9)
-      .setDepth(depth + 0.2);
+    gfx.fillStyle(doorColor, 1);
+    const doorWidth = width * 0.28;
+    gfx.fillRoundedRect(gym.x - doorWidth / 2, gym.y + halfH - 58, doorWidth, 56, 6);
+    gfx.fillStyle(this.shiftColor(doorColor, 0.4), 1);
+    gfx.fillCircle(gym.x + doorWidth / 2 - 10, gym.y + halfH - 32, 4);
+
+    gfx.fillStyle(trimColor, 1);
+    const signWidth = width * 0.5;
+    gfx.fillRoundedRect(gym.x - signWidth / 2, top - 24, signWidth, 24, 6);
+    gfx.lineStyle(2, baseColor, 0.4);
+    gfx.strokeRoundedRect(gym.x - signWidth / 2, top - 24, signWidth, 24, 6);
+
+    gfx.fillStyle(doorColor, 1);
+    gfx.fillCircle(gym.x, top + 28, 11);
+    gfx.lineStyle(1.2, trimColor, 0.6);
+    gfx.strokeCircle(gym.x, top + 28, 11);
+
     const label = this.add
-      .text(gym.x, gym.y - height / 2 - 22, gym.name, {
+      .text(gym.x, top - 28, gym.name, {
         fontFamily: "monospace",
         fontSize: 12,
         color: "#0f172a",
@@ -514,13 +588,17 @@ export default class WorldScene extends Phaser.Scene {
         wordWrap: { width: width * 0.45 }
       })
       .setOrigin(0.5)
-      .setDepth(depth + 0.21);
+      .setDepth(detailDepth + 3);
+    const badgeText = this.add
+      .text(gym.x, top + 18, gym.unit, { fontFamily: "monospace", fontSize: 10, color: "#f8fafc" })
+      .setOrigin(0.5)
+      .setDepth(detailDepth + 5);
 
-    const badge = this.add.circle(gym.x, gym.y - height / 2 + 24, 11, doorColor, 1).setDepth(depth + 0.3);
+    const badge = this.add.circle(gym.x, gym.y - height / 2 + 24, 11, doorColor, 1).setDepth(detailDepth + 4);
     this.add
       .text(badge.x, badge.y - 6, gym.unit, { fontFamily: "monospace", fontSize: 11, color: "#f8fafc" })
       .setOrigin(0.5)
-      .setDepth(depth + 0.31);
+      .setDepth(detailDepth + 5);
 
     const colliderWidth = width - 30;
     const colliderHeight = height - 28;
@@ -528,7 +606,224 @@ export default class WorldScene extends Phaser.Scene {
     this.physics.add.existing(collider, true);
     this.obstacles.add(collider as any);
 
-    this.gymsGroup.add([...towers, roof, base, ...windows, door, knob, signBg, label, badge, collider]);
+    this.gymsGroup.add([gfx, label, badgeText, collider]);
+  }
+
+  private renderHarborBuilding(building: WorldRect) {
+    const depth = building.depth ?? 8;
+    const parts: Phaser.GameObjects.GameObject[] = [];
+    const body = this.add
+      .rectangle(building.x, building.y, building.w, building.h, building.color ?? 0x3b82f6, 1)
+      .setStrokeStyle(4, building.strokeColor ?? 0x1e3a8a, 0.9)
+      .setDepth(depth);
+    parts.push(body);
+
+    if (building.solid) {
+      this.physics.add.existing(body, true);
+      this.obstacles.add(body as any);
+    }
+
+    const roof = this.add
+      .rectangle(building.x, building.y - building.h / 2 + 18, building.w + 20, 34, building.roofColor ?? 0x1e3a8a, 1)
+      .setDepth(depth + 1);
+    parts.push(roof);
+
+    const door = this.add
+      .rectangle(building.x, building.y + building.h / 2 - 35, 46, 60, building.door?.color ?? 0xf59e0b, 1)
+      .setDepth(depth + 2);
+    parts.push(door);
+
+    const label = this.add
+      .text(building.x, building.y - building.h / 2 - 26, building.label ?? "", {
+        fontFamily: "monospace",
+        fontSize: 14,
+        color: building.labelColor ?? "#0f172a"
+      })
+      .setOrigin(0.5)
+      .setDepth(depth + 3);
+    parts.push(label);
+    return parts;
+  }
+  private decorateHarborBoat(building: WorldRect) {
+    const hullColor = 0xb91c1c;
+    const accent = 0xfee2e2;
+    const deckColor = 0xf3f4f6;
+    const depth = (building.depth ?? 8) - 1;
+    const hullHeight = building.h * 0.35;
+    const hullY = building.y + building.h / 2 + hullHeight / 2 - 10;
+    const hullWidth = building.w + 60;
+    const mask = this.createClipMask(building);
+
+    const hullBase = this.add
+      .polygon(
+        building.x,
+        hullY,
+        [
+          -hullWidth / 2,
+          hullHeight / 2,
+          -hullWidth / 2 + 40,
+          -hullHeight / 2,
+          hullWidth / 2 - 60,
+          -hullHeight / 2,
+          hullWidth / 2,
+          hullHeight / 2
+        ],
+        accent,
+        0.95
+      )
+      .setDepth((building.depth ?? 8) + 5);
+    hullBase.setMask(mask);
+
+    const keel = this.add
+      .polygon(
+        building.x,
+        hullY + hullHeight / 2,
+        [
+          -hullWidth / 2 + 24,
+          0,
+          hullWidth / 2 - 24,
+          0,
+          hullWidth / 2 - 48,
+          22,
+          -hullWidth / 2 + 48,
+          22
+        ],
+        accent,
+        1
+      )
+      .setDepth((building.depth ?? 8) + 5);
+    keel.setMask(mask);
+
+    const hull = this.add
+      .polygon(
+        building.x,
+        hullY,
+        [
+          -hullWidth / 2,
+          hullHeight / 2,
+          -hullWidth / 2 + 32,
+          -hullHeight / 2,
+          hullWidth / 2 - 48,
+          -hullHeight / 2,
+          hullWidth / 2,
+          hullHeight / 2
+        ],
+        hullColor,
+        1
+      )
+      .setDepth((building.depth ?? 8) + 6);
+    hull.setMask(mask);
+    const stripe = this.add
+      .arc(building.x, building.y + building.h / 2 - 9, hullWidth / 2, 180, 360, true)
+      .setFillStyle(0xffffff, 1)
+      .setDepth((building.depth ?? 8) + 6);
+
+    const deck = this.add
+      .rectangle(building.x, building.y - building.h / 2 + 25, building.w - 40, 18, deckColor, 1)
+      .setStrokeStyle(2, 0xd1d5db, 0.6)
+      .setDepth(depth + 6);
+
+    const midLine = this.add
+      .rectangle(building.x, building.y + building.h / 2 - 18, 3, building.h - 42, this.shiftColor(hullColor, -0.25), 0.4)
+      .setDepth((building.depth ?? 8) + 7);
+
+    const anchorOffsets = [-60, 60];
+    const anchors = anchorOffsets.map((offset) => {
+      const anchor = this.add.graphics({ x: building.x + offset, y: building.y + building.h / 2 - 12 });
+      anchor.lineStyle(3, 0xb91c1c, 0.9);
+      anchor.beginPath();
+      anchor.moveTo(0, -18);
+      anchor.lineTo(0, 18);
+      anchor.moveTo(-10, 10);
+      anchor.lineTo(0, 18);
+      anchor.lineTo(10, 10);
+      anchor.strokePath();
+      anchor.fillStyle(0xffffff, 1);
+      anchor.fillCircle(0, -20, 4);
+      anchor.setDepth((building.depth ?? 8) + 7);
+      return anchor;
+    });
+
+    const bobParts: Phaser.GameObjects.GameObject[] = [hullBase, keel, hull, deck, stripe, midLine, ...anchors, ...this.harborBuildingParts];
+
+    const stackColors = [0xf87171, 0xf97316];
+    stackColors.forEach((color, idx) => {
+      const stack = this.add
+        .rectangle(building.x - 50 + idx * 70, building.y - building.h / 2 + 10, 22, 70, color, 1)
+        .setStrokeStyle(2, 0xfef2f2, 0.7)
+        .setDepth(depth + 7);
+      bobParts.push(stack);
+      const smoke = this.add.circle(stack.x, stack.y - 60, 14, 0xfafafa, 0.92).setDepth(depth + 6);
+      this.tweens.add({
+        targets: smoke,
+        y: stack.y - 80,
+        alpha: { from: 0.9, to: 0.2 },
+        scale: { from: 1, to: 1.4 },
+        duration: 1600,
+        delay: idx * 300,
+        repeat: -1
+      });
+    });
+
+    const cargoColors = [0xfef3c7, 0x93c5fd, 0x86efac];
+    cargoColors.forEach((color, idx) => {
+      const cargo = this.add
+        .rectangle(building.x - hullWidth / 4 + idx * (building.w / 4), building.y - 10, 46, 28, color, 1)
+        .setStrokeStyle(2, 0x0f172a, 0.15)
+        .setDepth(depth + 6.5);
+      bobParts.push(cargo);
+      this.tweens.add({
+        targets: cargo,
+        angle: { from: -1.5, to: 1.5 },
+        duration: 1800 + idx * 300,
+        yoyo: true,
+        repeat: -1
+      });
+    });
+
+    const waves: Phaser.GameObjects.Ellipse[] = [];
+    for (let i = -2; i <= 2; i++) {
+      const wave = this.add
+        .ellipse(building.x + i * 46, hullY + hullHeight / 2 + 8, 42, 10, 0x93c5fd, 0.35)
+        .setDepth(depth - 2);
+      waves.push(wave);
+      this.tweens.add({
+        targets: wave,
+        scaleX: { from: 0.8, to: 1.1 },
+        alpha: { from: 0.45, to: 0.05 },
+        duration: 2200,
+        delay: i * 140,
+        repeat: -1
+      });
+    }
+
+    const splashes: Phaser.GameObjects.Graphics[] = [];
+    for (let i = -2; i <= 2; i += 2) {
+      const splash = this.add.graphics({ x: building.x + i * 60, y: hullY + hullHeight / 2 + 4 });
+      splash.fillStyle(0xffffff, 0.7);
+      splash.fillEllipse(0, 0, 18, 6);
+      splash.setDepth(depth - 1);
+      splashes.push(splash);
+      this.tweens.add({
+        targets: splash,
+        y: splash.y - 6,
+        alpha: { from: 0.7, to: 0 },
+        scaleX: { from: 1, to: 1.2 },
+        duration: 1800,
+        delay: i * 120 + 200,
+        repeat: -1,
+        onRepeat: () => splash.setPosition(building.x + i * 60, hullY + hullHeight / 2 + 4)
+      });
+    }
+
+    this.tweens.add({
+      targets: bobParts,
+      y: "+=6",
+      duration: 2400,
+      ease: "Sine.easeInOut",
+      yoyo: true,
+      repeat: -1
+    });
   }
 
   private spawnBattleNPCs() {
@@ -601,7 +896,8 @@ export default class WorldScene extends Phaser.Scene {
       const moveToPoint = (currentIndex: number) => {
         const nextIndex = (currentIndex + 1) % routePoints.length;
         const target = routePoints[nextIndex];
-        const duration = Phaser.Math.Distance.Between(this.professor.x, this.professor.y, target.x, target.y) * 12;
+        const distance = Phaser.Math.Distance.Between(this.professor.x, this.professor.y, target.x, target.y);
+        const duration = distance * 14;
 
         this.tweens.add({
           targets: this.professor,
@@ -609,7 +905,10 @@ export default class WorldScene extends Phaser.Scene {
           y: target.y,
           duration,
           onStart: () => this.updateProfessorAnim(target.x, target.y),
-          onComplete: () => moveToPoint(nextIndex)
+          onComplete: () => {
+            this.professor?.anims.play("walk-down", true);
+            this.time.delayedCall(2000, () => moveToPoint(nextIndex));
+          }
         });
       };
 
@@ -665,6 +964,30 @@ export default class WorldScene extends Phaser.Scene {
       case "cobble":
         fillDots(28, 8, 0.25);
         break;
+      case "gravel": {
+        gfx.fillStyle(this.shiftColor(feature.color, 0.1), 0.55);
+        const density = Math.max(60, Math.round((feature.w * feature.h) / 3200));
+        for (let i = 0; i < density; i++) {
+          const rx = Phaser.Math.Between(4, feature.w - 4);
+          const ry = Phaser.Math.Between(4, feature.h - 4);
+          gfx.fillCircle(rx, ry, Phaser.Math.Between(1, 2));
+        }
+        const isHorizontal = feature.w >= feature.h;
+        const edgeThickness = Math.max(6, (isHorizontal ? feature.h : feature.w) * 0.22);
+        gfx.fillStyle(0x7c3f13, 0.6);
+        if (isHorizontal) {
+          gfx.fillRect(-10, 0, feature.w + 20, edgeThickness);
+          gfx.fillStyle(0x513210, 0.75);
+          gfx.fillRect(-10, feature.h - edgeThickness, feature.w + 20, edgeThickness);
+        } else {
+          gfx.fillRect(0, -10, edgeThickness, feature.h + 20);
+          gfx.fillStyle(0x513210, 0.75);
+          gfx.fillRect(feature.w - edgeThickness, -10, edgeThickness, feature.h + 20);
+        }
+        gfx.lineStyle(1.5, feature.strokeColor ?? 0x4b5563, 0.25);
+        gfx.strokeRect(0, 0, feature.w, feature.h);
+        break;
+      }
       case "pavers":
         gfx.lineStyle(1, accent, 0.25);
         for (let y = 16; y < feature.h; y += 16) gfx.lineBetween(0, y, feature.w, y);
@@ -869,5 +1192,31 @@ export default class WorldScene extends Phaser.Scene {
       console.debug("BGM play blocked; awaiting unlock.", err);
       onBlocked?.();
     }
+  }
+
+  private createClipMask(rect: WorldRect) {
+    const shape = this.make.graphics({});
+    shape.fillStyle(0xffffff, 1);
+    shape.fillRect(rect.x - rect.w / 2, rect.y - rect.h / 2, rect.w, rect.h);
+    const mask = shape.createGeometryMask();
+    shape.destroy();
+    return mask;
+  }
+
+  private fitBuildingToTerrain(building: WorldRect) {
+    const padding = 2;
+    return {
+      ...building,
+      w: Math.max(20, building.w - padding * 2),
+      h: Math.max(20, building.h - padding * 2)
+    };
+  }
+
+  private scaleRect(rect: WorldRect, factor: number) {
+    return {
+      ...rect,
+      w: rect.w * factor,
+      h: rect.h * factor
+    };
   }
 }

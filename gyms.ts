@@ -60,7 +60,7 @@ export const GYMS: GymCfg[] = [
   {
     unit: "3",
     x: 1850,
-    y: 600,
+    y: 120,
     threshold: 12,
     name: "Unit 3 Gym",
     color: 0x2563eb,
@@ -78,8 +78,8 @@ export const GYMS: GymCfg[] = [
   },
   {
     unit: "4",
-    x: 2500,
-    y: 820,
+    x: 2885,
+    y: 670,
     threshold: 12,
     name: "Unit 4 Gym",
     color: 0xdb2777,
@@ -97,7 +97,7 @@ export const GYMS: GymCfg[] = [
   },
   {
     unit: "5",
-    x: 2900,
+    x: 3000,
     y: 1500,
     threshold: 14,
     name: "Unit 5 Gym",

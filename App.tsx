@@ -331,6 +331,8 @@ useEffect(() => {
       (window as any).ALGMON_SET_PROMPT = undefined;
       (window as any).ALGMON_TRY_GYM = undefined;
       (window as any).ALGMON_START_NPC_BATTLE = undefined;
+      (window as any).ALGMON_EXIT_GYM = undefined;
+      (window as any).ALGMON_WARP_PLAYER = undefined;
       (window as any).__NEAR_GYM_UNIT = null;
       (window as any).__BOSS_LOCK = false;
       (window as any).__NPC_LOCK = false;
@@ -501,6 +503,7 @@ useEffect(() => {
         setBossUnit(null);
         (window as any).__BOSS_LOCK = false;
         alert(failReason);
+        leaveGymAfterBattle(currentBossUnit);
         return;
       }
 
@@ -544,6 +547,7 @@ useEffect(() => {
             console.error("badge error", e);
           }
         }
+        leaveGymAfterBattle(currentBossUnit);
       }
     }
 
@@ -721,6 +725,17 @@ useEffect(() => {
     setQuestionContext("study");
     setCurrentQuestionUnit(null);
     setBattleFx(null);
+  }
+
+  function leaveGymAfterBattle(unit?: string | null) {
+    if (!unit) return;
+    (window as any).ALGMON_EXIT_GYM?.();
+    window.setTimeout(() => {
+      const cfg = GYMS.find((g) => g.unit === unit);
+      if (!cfg) return;
+      const exitY = cfg.y + (cfg.size?.h ?? 150) / 2 + 48;
+      (window as any).ALGMON_WARP_PLAYER?.({ x: cfg.x, y: exitY });
+    }, 120);
   }
 
   // --------- STARTER PICK ----------

@@ -49,6 +49,8 @@ export default class GymScene extends Phaser.Scene {
     this.spawnLeader(palette);
     this.drawUI();
 
+     (window as any).ALGMON_EXIT_GYM = () => this.exit();
+
     this.input.keyboard!.on("keydown-B", () => this.beginLeaderBattle());
     this.input.keyboard!.on("keydown-ENTER", () => this.beginLeaderBattle());
     this.input.keyboard!.on("keydown-ESC", () => this.exit());
@@ -171,5 +173,6 @@ export default class GymScene extends Phaser.Scene {
   private exit() {
     this.scene.stop();
     if (this.returnScene) this.scene.resume(this.returnScene);
+    (window as any).ALGMON_EXIT_GYM = undefined;
   }
 }
